@@ -88,6 +88,24 @@ export default function ScanScreen() {
     }
   };
 
+  const startManualEntry = () => {
+    setImageUri(null);
+    setParsed({
+      storeName: '',
+      date: new Date().toISOString(),
+      totalAmount: 0,
+      category: 'Other',
+      lineItems: [],
+      rawText: '',
+    });
+    setStoreName('');
+    setDate(format(new Date(), 'yyyy-MM-dd'));
+    setAmount('');
+    setCategory('Other');
+    setNotes('');
+    setScanState('review');
+  };
+
   const pickFromGallery = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -205,6 +223,15 @@ export default function ScanScreen() {
               </View>
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity
+            style={styles.manualEntry}
+            onPress={startManualEntry}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="create-outline" size={20} color={theme.colors.primary} />
+            <Text style={styles.manualEntryText}>Enter manually (no receipt)</Text>
+          </TouchableOpacity>
 
           <Text style={styles.hint}>
             Works with grocery, restaurant, electronics & more receipts
@@ -439,6 +466,24 @@ const styles = StyleSheet.create({
   actionSub: {
     color: 'rgba(255,255,255,0.75)',
     fontSize: theme.font.xs,
+  },
+  manualEntry: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: theme.radius.full,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceHigh,
+    marginTop: theme.spacing.xs,
+  },
+  manualEntryText: {
+    color: theme.colors.primary,
+    fontSize: theme.font.sm,
+    fontWeight: '600',
   },
   hint: {
     color: theme.colors.textMuted,
