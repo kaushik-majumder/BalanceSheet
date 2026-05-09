@@ -52,7 +52,11 @@ module.exports = function withTextRecognitionFix(config) {
           "minSdkVersion safeExtGet('TextRecognition_minSdkVersion', 23)",
         )
         .replace(/\s*jcenter\(\)\n?/g, '\n')
-        .replace(/\s*implementation "com\.facebook\.react:react-native:\$\{reactNativeVersion\}".*\n?/g, '\n')
+        // RN 0.71+ renamed the Maven artifact from react-native to react-android
+        .replace(
+          /\s*implementation "com\.facebook\.react:react-native:\$\{reactNativeVersion\}".*\n?/g,
+          '\n    implementation "com.facebook.react:react-android"\n',
+        )
         .replace(/ext \{\s*reactNativeVersion = '[^']*'\s*\}\s*\n?/g, '')
         .replace(
           "implementation 'com.google.mlkit:text-recognition:16.0.0-beta1'",
