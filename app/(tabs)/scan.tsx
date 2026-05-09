@@ -151,7 +151,8 @@ export default function ScanScreen() {
         { text: 'Scan Another', onPress: resetState },
       ]);
     } catch (err) {
-      Alert.alert('Error', 'Failed to save receipt. Please try again.');
+      const msg = err instanceof Error ? err.message : String(err);
+      Alert.alert('Error', `Failed to save receipt: ${msg}`);
     } finally {
       setSaving(false);
     }
