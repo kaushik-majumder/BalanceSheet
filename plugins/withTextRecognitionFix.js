@@ -58,8 +58,12 @@ module.exports = function withTextRecognitionFix(config) {
           "implementation 'com.google.mlkit:text-recognition:16.0.0-beta1'",
           "implementation 'com.google.mlkit:text-recognition:16.0.0'",
         )
-        .replace("apply plugin: 'com.android.library'", "apply plugin: 'com.android.library'\n")
-        .replace(/android \{/, "android {\n    namespace 'com.reactnativetextrecognition'");
+        .replace("apply plugin: 'com.android.library'", "apply plugin: 'com.android.library'\n");
+
+      // Only add namespace if not already present (idempotent)
+      if (!gradle.includes("namespace 'com.reactnativetextrecognition'")) {
+        gradle = gradle.replace(/android \{/, "android {\n    namespace 'com.reactnativetextrecognition'");
+      }
 
       fs.writeFileSync(gradlePath, gradle);
       return config;
