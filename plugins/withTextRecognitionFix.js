@@ -3,17 +3,23 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Patches react-native-text-recognition's build.gradle to be compatible
- * with React Native 0.74 + Expo SDK 51:
- *  - Bumps compileSdkVersion/targetSdkVersion to 34
- *  - Removes deprecated jcenter() repository
- *  - Removes `com.facebook.react:react-native:+` Maven dep (broken in RN 0.71+;
- *    the react-native-gradle-plugin now owns that dependency)
- *  - Upgrades ML Kit from 16.0.0-beta1 → 16.0.0 stable
- *  - Adds `namespace` declaration (required by Android Gradle Plugin 8.0+)
+ * Two fixes bundled into one plugin:
+ *
+ * 1. Patches react-native-text-recognition's build.gradle for RN 0.74 + Expo SDK 51:
+ *    - Bumps compileSdkVersion/targetSdkVersion to 34
+ *    - Removes deprecated jcenter() repository
+ *    - Removes com.facebook.react:react-native:+ Maven dep (broken since RN 0.71)
+ *    - Upgrades ML Kit from 16.0.0-beta1 → 16.0.0 stable
+ *    - Adds namespace declaration (required by AGP 8.0+)
+ *
+ * 2. Downgrades Gradle wrapper from 8.8 → 8.6.
+ *    expo-modules-core@1.12.x uses `from components.release` which relies on
+ *    synchronous component registration removed in Gradle 8.8. Gradle 8.6 is
+ *    the latest version fully compatible with Expo SDK 51.
  */
 module.exports = function withTextRecognitionFix(config) {
-  return withDangerousMod(config, [
+  // Fix 1: patch react-native-text-recognition build.gradle
+  config = withDangerousMod(config, [
     'android',
     (config) => {
       const gradlePath = path.join(
@@ -29,7 +35,6 @@ module.exports = function withTextRecognitionFix(config) {
       let gradle = fs.readFileSync(gradlePath, 'utf8');
 
       gradle = gradle
-        // Fix SDK versions
         .replace(
           /compileSdkVersion safeExtGet\('TextRecognition_compileSdkVersion',\s*\d+\)/,
           "compileSdkVersion safeExtGet('TextRecognition_compileSdkVersion', 34)",
@@ -46,32 +51,43 @@ module.exports = function withTextRecognitionFix(config) {
           /minSdkVersion safeExtGet\('TextRecognition_minSdkVersion',\s*\d+\)/,
           "minSdkVersion safeExtGet('TextRecognition_minSdkVersion', 24)",
         )
-        // Remove deprecated jcenter()
         .replace(/\s*jcenter\(\)\n?/g, '\n')
-        // Remove the broken `com.facebook.react:react-native:+` Maven dep.
-        // RN 0.71+ distributes react-native as a local file via node_modules,
-        // not from Maven. The react-native-gradle-plugin handles it automatically.
         .replace(/\s*implementation "com\.facebook\.react:react-native:\$\{reactNativeVersion\}".*\n?/g, '\n')
-        // Remove the now-unused ext block that defined reactNativeVersion
         .replace(/ext \{\s*reactNativeVersion = '[^']*'\s*\}\s*\n?/g, '')
-        // Upgrade ML Kit from beta to stable
         .replace(
           "implementation 'com.google.mlkit:text-recognition:16.0.0-beta1'",
           "implementation 'com.google.mlkit:text-recognition:16.0.0'",
         )
-        // Add namespace — required by Android Gradle Plugin 8.0+ (Expo SDK 51).
-        // Without it the build fails with "Namespace not specified".
-        .replace(
-          "apply plugin: 'com.android.library'",
-          "apply plugin: 'com.android.library'\n",
-        )
-        .replace(
-          /android \{/,
-          "android {\n    namespace 'com.reactnativetextrecognition'",
-        );
+        .replace("apply plugin: 'com.android.library'", "apply plugin: 'com.android.library'\n")
+        .replace(/android \{/, "android {\n    namespace 'com.reactnativetextrecognition'");
 
       fs.writeFileSync(gradlePath, gradle);
       return config;
     },
   ]);
+
+  // Fix 2: downgrade Gradle wrapper to 8.6 (last version compatible with expo-modules-core@1.12.x)
+  config = withDangerousMod(config, [
+    'android',
+    (config) => {
+      const wrapperPath = path.join(
+        config.modRequest.platformProjectRoot,
+        'gradle',
+        'wrapper',
+        'gradle-wrapper.properties',
+      );
+
+      if (!fs.existsSync(wrapperPath)) return config;
+
+      let content = fs.readFileSync(wrapperPath, 'utf8');
+      content = content.replace(
+        /distributionUrl=.*gradle-[\d.]+-all\.zip/,
+        'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.6-all.zip',
+      );
+      fs.writeFileSync(wrapperPath, content);
+      return config;
+    },
+  ]);
+
+  return config;
 };
