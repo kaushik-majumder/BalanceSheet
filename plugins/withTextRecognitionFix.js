@@ -70,7 +70,33 @@ module.exports = function withTextRecognitionFix(config) {
     },
   ]);
 
-  // Fix 2: downgrade Gradle wrapper to 8.6 (last version compatible with expo-modules-core@1.12.x)
+  // Fix 2: inject TextRecognition ext properties into root android/build.gradle so safeExtGet
+  // returns the correct values regardless of whether node_modules was patched (e.g. after cache restore)
+  config = withDangerousMod(config, [
+    'android',
+    (config) => {
+      const buildGradlePath = path.join(
+        config.modRequest.platformProjectRoot,
+        'build.gradle',
+      );
+
+      if (!fs.existsSync(buildGradlePath)) return config;
+
+      let content = fs.readFileSync(buildGradlePath, 'utf8');
+
+      if (!content.includes('TextRecognition_compileSdkVersion')) {
+        content = content.replace(
+          /ext\s*\{/,
+          `ext {\n        TextRecognition_compileSdkVersion = 34\n        TextRecognition_buildToolsVersion = '34.0.0'\n        TextRecognition_targetSdkVersion = 34\n        TextRecognition_minSdkVersion = 24`,
+        );
+      }
+
+      fs.writeFileSync(buildGradlePath, content);
+      return config;
+    },
+  ]);
+
+  // Fix 3: downgrade Gradle wrapper to 8.6 (last version compatible with expo-modules-core@1.12.x)
   config = withDangerousMod(config, [
     'android',
     (config) => {
