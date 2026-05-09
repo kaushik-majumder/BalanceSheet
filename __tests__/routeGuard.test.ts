@@ -119,6 +119,49 @@ describe('pickTarget — gate ordering invariants', () => {
   });
 });
 
+describe('pickTarget — sign-out race regression', () => {
+  // Regression: previously, signOut() synchronously set biometricUnlocked=false
+  // BEFORE Firebase's auth listener cleared user, leaving an intermediate
+  // render with { user: <old>, biometricUnlocked: false } that briefly routed
+  // to /lock and triggered the OS biometric prompt. The fix is to let the
+  // listener be the single source of truth — and to ensure pickTarget never
+  // routes a logged-out user (or a logged-in-but-locked user mid-signout) to
+  // anywhere other than auth.
+  it('intermediate render with logged-out user but stale biometricUnlocked goes to auth, not lock', () => {
+    const s: RouteState = {
+      onboardingSeen: true,
+      user: null,
+      biometricAsked: true,
+      biometricEnabled: true,
+      biometricUnlocked: true, // stale — never re-rendered after sign-out
+    };
+    expect(pickTarget(s)).toBe('auth');
+  });
+
+  it('intermediate render with logged-out user and cleared biometricUnlocked also goes to auth', () => {
+    const s: RouteState = {
+      onboardingSeen: true,
+      user: null,
+      biometricAsked: true,
+      biometricEnabled: true,
+      biometricUnlocked: false,
+    };
+    expect(pickTarget(s)).toBe('auth');
+  });
+
+  it('biometricUnlocked has no effect when user is null', () => {
+    for (const unlocked of [true, false]) {
+      const s: RouteState = {
+        ...baseState,
+        onboardingSeen: true,
+        user: null,
+        biometricUnlocked: unlocked,
+      };
+      expect(pickTarget(s)).toBe('auth');
+    }
+  });
+});
+
 describe('targetToHref', () => {
   it('maps every target to a leading-slash route', () => {
     const targets = ['onboarding', 'auth', 'biometric-setup', 'lock', '(tabs)'] as const;

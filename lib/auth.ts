@@ -1,5 +1,10 @@
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import {
+  GoogleSignin,
+  isErrorWithCode,
+  isSuccessResponse,
+  statusCodes,
+} from '@react-native-google-signin/google-signin';
 
 let googleConfigured = false;
 
@@ -49,8 +54,25 @@ export async function confirmPhoneCode(
 
 export async function signInWithGoogle(): Promise<AuthUser> {
   await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-  const userInfo = await GoogleSignin.signIn();
-  const idToken = (userInfo as any)?.idToken ?? (userInfo as any)?.data?.idToken;
+  let response;
+  try {
+    response = await GoogleSignin.signIn();
+  } catch (e) {
+    if (isErrorWithCode(e) && e.code === statusCodes.SIGN_IN_CANCELLED) {
+      const cancelled: Error & { code: string } = Object.assign(new Error('Sign-in cancelled'), {
+        code: 'SIGN_IN_CANCELLED',
+      });
+      throw cancelled;
+    }
+    throw e;
+  }
+  if (!isSuccessResponse(response)) {
+    const cancelled: Error & { code: string } = Object.assign(new Error('Sign-in cancelled'), {
+      code: 'SIGN_IN_CANCELLED',
+    });
+    throw cancelled;
+  }
+  const idToken = response.data.idToken;
   if (!idToken) throw new Error('No Google ID token returned.');
   const credential = auth.GoogleAuthProvider.credential(idToken);
   const cred = await auth().signInWithCredential(credential);

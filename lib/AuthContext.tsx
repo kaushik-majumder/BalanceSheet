@@ -98,8 +98,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
       markBiometricUnlocked: () => setBiometricUnlocked(true),
       signOut: async () => {
+        // Don't clear biometricUnlocked synchronously — the onAuthStateChanged
+        // listener does it when user becomes null. Doing both here causes a
+        // race where React renders { user: <old>, biometricUnlocked: false }
+        // before the listener fires, briefly routing to the lock screen and
+        // triggering the OS biometric prompt.
         await signOutEverywhere();
-        setBiometricUnlocked(false);
       },
     }),
     [initializing, user, onboardingSeen, biometricEnabled, biometricAsked, biometricUnlocked],
