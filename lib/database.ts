@@ -32,7 +32,55 @@ export async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_receipts_date     ON receipts(date);
     CREATE INDEX IF NOT EXISTS idx_receipts_category ON receipts(category);
     CREATE INDEX IF NOT EXISTS idx_lineitems_receipt ON line_items(receipt_id);
+
+    CREATE TABLE IF NOT EXISTS profiles (
+      uid         TEXT PRIMARY KEY,
+      first_name  TEXT NOT NULL,
+      last_name   TEXT NOT NULL,
+      gender      TEXT NOT NULL,
+      age         INTEGER NOT NULL,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
   `);
+}
+
+export async function deleteAllReceipts(): Promise<void> {
+  await db.execAsync(`DELETE FROM line_items; DELETE FROM receipts;`);
+}
+
+export interface ProfileRow {
+  uid: string;
+  first_name: string;
+  last_name: string;
+  gender: string;
+  age: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getProfileRow(uid: string): Promise<ProfileRow | null> {
+  return (
+    (await db.getFirstAsync<ProfileRow>(`SELECT * FROM profiles WHERE uid=?`, [uid])) ?? null
+  );
+}
+
+export async function upsertProfileRow(row: ProfileRow): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO profiles (uid, first_name, last_name, gender, age, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(uid) DO UPDATE SET
+       first_name = excluded.first_name,
+       last_name  = excluded.last_name,
+       gender     = excluded.gender,
+       age        = excluded.age,
+       updated_at = excluded.updated_at`,
+    [row.uid, row.first_name, row.last_name, row.gender, row.age, row.created_at, row.updated_at],
+  );
+}
+
+export async function deleteProfileRow(uid: string): Promise<void> {
+  await db.runAsync(`DELETE FROM profiles WHERE uid=?`, [uid]);
 }
 
 export async function saveReceipt(receipt: Receipt): Promise<void> {

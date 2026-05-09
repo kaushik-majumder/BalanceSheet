@@ -28,6 +28,9 @@ function RootStack() {
   const {
     initializing,
     user,
+    emailVerified,
+    requiresProfile,
+    profileComplete,
     onboardingSeen,
     biometricEnabled,
     biometricAsked,
@@ -41,6 +44,9 @@ function RootStack() {
     const target = pickTarget({
       user,
       onboardingSeen,
+      emailVerified,
+      requiresProfile,
+      profileComplete,
       biometricEnabled,
       biometricAsked,
       biometricUnlocked,
@@ -52,6 +58,9 @@ function RootStack() {
   }, [
     initializing,
     user,
+    emailVerified,
+    requiresProfile,
+    profileComplete,
     onboardingSeen,
     biometricEnabled,
     biometricAsked,
@@ -78,9 +87,19 @@ function RootStack() {
     >
       <Stack.Screen name="onboarding" options={{ headerShown: false }} />
       <Stack.Screen name="auth" options={{ headerShown: false }} />
+      <Stack.Screen name="verify-email" options={{ headerShown: false, gestureEnabled: false }} />
+      <Stack.Screen name="profile-setup" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="biometric-setup" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="lock" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          presentation: 'modal',
+          headerStyle: { backgroundColor: theme.colors.surface },
+        }}
+      />
       <Stack.Screen
         name="edit/[id]"
         options={{

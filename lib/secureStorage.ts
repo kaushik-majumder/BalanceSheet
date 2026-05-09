@@ -36,3 +36,9 @@ export async function getBiometricAsked(): Promise<boolean> {
 export async function setBiometricAsked(): Promise<void> {
   await SecureStore.setItemAsync(Keys.biometricAsked, '1');
 }
+
+export async function resetAllSecureStorage(): Promise<void> {
+  await Promise.all(
+    Object.values(Keys).map((k) => SecureStore.deleteItemAsync(k)),
+  );
+}

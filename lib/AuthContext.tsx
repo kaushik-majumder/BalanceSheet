@@ -1,11 +1,18 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import Constants from 'expo-constants';
 import {
+  AuthProvider as FirebaseProviderId,
   AuthUser,
   configureGoogleSignIn,
+  deleteCurrentAccount,
+  getPrimaryProvider,
   onAuthStateChanged,
+  reloadCurrentUser,
+  requiresProfileForProvider,
   signOutEverywhere,
 } from './auth';
+import { Profile, getProfile, deleteProfile } from './profile';
+import { deleteAllReceipts } from './database';
 import {
   getBiometricAsked,
   getBiometricEnabled,
@@ -13,11 +20,18 @@ import {
   setBiometricAsked as persistBiometricAsked,
   setBiometricEnabled as persistBiometricEnabled,
   setOnboardingSeen as persistOnboardingSeen,
+  resetAllSecureStorage,
 } from './secureStorage';
 
 type AuthState = {
   initializing: boolean;
   user: AuthUser | null;
+  provider: FirebaseProviderId;
+  /** null when user has no email (phone-only). */
+  emailVerified: boolean | null;
+  requiresProfile: boolean;
+  profile: Profile | null;
+  profileComplete: boolean;
   onboardingSeen: boolean;
   biometricEnabled: boolean;
   biometricAsked: boolean;
@@ -26,7 +40,11 @@ type AuthState = {
   setBiometricEnabled: (enabled: boolean) => Promise<void>;
   markBiometricAsked: () => Promise<void>;
   markBiometricUnlocked: () => void;
+  refreshUser: () => Promise<AuthUser | null>;
+  refreshProfile: () => Promise<void>;
+  setProfile: (p: Profile) => void;
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -34,6 +52,8 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [initializing, setInitializing] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [profile, setProfileState] = useState<Profile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [onboardingSeen, setOnboardingSeenState] = useState(false);
   const [biometricEnabled, setBiometricEnabledState] = useState(false);
   const [biometricAsked, setBiometricAskedState] = useState(false);
@@ -41,7 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const webClientId =
-      (Constants.expoConfig?.extra as any)?.googleWebClientId ??
+      (Constants.expoConfig?.extra as { googleWebClientId?: string } | undefined)?.googleWebClientId ??
       process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
     if (webClientId) {
       configureGoogleSignIn(webClientId);
@@ -66,6 +86,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Load (or clear) the local profile whenever the signed-in user changes.
+  useEffect(() => {
+    let mounted = true;
+    if (!user) {
+      setProfileState(null);
+      setProfileLoaded(true);
+      return;
+    }
+    setProfileLoaded(false);
+    (async () => {
+      try {
+        const p = await getProfile(user.uid);
+        if (!mounted) return;
+        setProfileState(p);
+      } finally {
+        if (mounted) setProfileLoaded(true);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.uid]);
+
   useEffect(() => {
     const unsub = onAuthStateChanged((u) => {
       setUser(u);
@@ -75,10 +118,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsub;
   }, []);
 
+  const provider = useMemo(() => getPrimaryProvider(user), [user]);
+  const requiresProfile = useMemo(() => requiresProfileForProvider(provider), [provider]);
+  const profileComplete = profile !== null;
+  const emailVerified: boolean | null = user
+    ? user.email
+      ? user.emailVerified
+      : null
+    : null;
+
+  const refreshUser = useCallback(async () => {
+    const u = await reloadCurrentUser();
+    setUser(u);
+    return u;
+  }, []);
+
+  const refreshProfile = useCallback(async () => {
+    if (!user) {
+      setProfileState(null);
+      return;
+    }
+    const p = await getProfile(user.uid);
+    setProfileState(p);
+  }, [user?.uid]);
+
   const value = useMemo<AuthState>(
     () => ({
-      initializing,
+      initializing: initializing || (user !== null && !profileLoaded),
       user,
+      provider,
+      emailVerified,
+      requiresProfile,
+      profile,
+      profileComplete,
       onboardingSeen,
       biometricEnabled,
       biometricAsked,
@@ -97,6 +169,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setBiometricAskedState(true);
       },
       markBiometricUnlocked: () => setBiometricUnlocked(true),
+      refreshUser,
+      refreshProfile,
+      setProfile: (p: Profile) => setProfileState(p),
       signOut: async () => {
         // Don't clear biometricUnlocked synchronously — the onAuthStateChanged
         // listener does it when user becomes null. Doing both here causes a
@@ -105,8 +180,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // triggering the OS biometric prompt.
         await signOutEverywhere();
       },
+      deleteAccount: async () => {
+        const uid = user?.uid;
+        if (!uid) return;
+        // Wipe local data first so a partial failure (e.g. Firebase requires
+        // recent re-authentication) doesn't leave orphaned receipts behind.
+        await Promise.all([deleteAllReceipts(), deleteProfile(uid)]);
+        await resetAllSecureStorage();
+        setOnboardingSeenState(false);
+        setBiometricEnabledState(false);
+        setBiometricAskedState(false);
+        await deleteCurrentAccount();
+        // onAuthStateChanged will fire with null, clearing user + profile.
+      },
     }),
-    [initializing, user, onboardingSeen, biometricEnabled, biometricAsked, biometricUnlocked],
+    [
+      initializing,
+      user,
+      provider,
+      emailVerified,
+      requiresProfile,
+      profile,
+      profileComplete,
+      profileLoaded,
+      onboardingSeen,
+      biometricEnabled,
+      biometricAsked,
+      biometricUnlocked,
+      refreshUser,
+      refreshProfile,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
