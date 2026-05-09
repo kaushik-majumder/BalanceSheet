@@ -3,7 +3,7 @@ const withTextRecognitionFix = require('./plugins/withTextRecognitionFix');
 module.exports = ({ config }) => {
   return withTextRecognitionFix({
     ...config,
-    name: 'ReceiptScanner',
+    name: 'Receipt Scanner',
     slug: 'receipt-scanner',
     version: '1.0.0',
     orientation: 'portrait',
@@ -16,7 +16,7 @@ module.exports = ({ config }) => {
     },
     ios: {
       supportsTablet: false,
-      bundleIdentifier: 'com.yourname.receiptscanner',
+      bundleIdentifier: 'com.kaushikmajumder.receiptscanner',
       infoPlist: {
         NSCameraUsageDescription: 'ReceiptScanner needs camera access to scan receipts.',
         NSPhotoLibraryUsageDescription:
@@ -33,7 +33,8 @@ module.exports = ({ config }) => {
         'android.permission.READ_EXTERNAL_STORAGE',
         'android.permission.READ_MEDIA_IMAGES',
       ],
-      package: 'com.yourname.receiptscanner',
+      package: 'com.kaushikmajumder.receiptscanner',
+      versionCode: 1,
     },
     plugins: [
       'expo-router',
