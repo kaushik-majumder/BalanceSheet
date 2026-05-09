@@ -49,7 +49,7 @@ module.exports = function withTextRecognitionFix(config) {
         )
         .replace(
           /minSdkVersion safeExtGet\('TextRecognition_minSdkVersion',\s*\d+\)/,
-          "minSdkVersion safeExtGet('TextRecognition_minSdkVersion', 24)",
+          "minSdkVersion safeExtGet('TextRecognition_minSdkVersion', 23)",
         )
         .replace(/\s*jcenter\(\)\n?/g, '\n')
         .replace(/\s*implementation "com\.facebook\.react:react-native:\$\{reactNativeVersion\}".*\n?/g, '\n')
@@ -87,7 +87,7 @@ module.exports = function withTextRecognitionFix(config) {
       if (!content.includes('TextRecognition_compileSdkVersion')) {
         content = content.replace(
           /ext\s*\{/,
-          `ext {\n        TextRecognition_compileSdkVersion = 34\n        TextRecognition_buildToolsVersion = '34.0.0'\n        TextRecognition_targetSdkVersion = 34\n        TextRecognition_minSdkVersion = 24`,
+          `ext {\n        TextRecognition_compileSdkVersion = 34\n        TextRecognition_buildToolsVersion = '34.0.0'\n        TextRecognition_targetSdkVersion = 34\n        TextRecognition_minSdkVersion = 23`,
         );
       }
 
