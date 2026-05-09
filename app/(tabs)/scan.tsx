@@ -1,0 +1,565 @@
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Image,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+  TouchableOpacity,
+  Platform,
+} from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { useRouter } from 'expo-router';
+import { format } from 'date-fns';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import TextRecognition from 'react-native-text-recognition';
+import { v4 as uuidv4 } from 'uuid';
+import { saveReceipt } from '../../lib/database';
+import { parseReceiptText } from '../../lib/parser';
+import { ParsedReceipt, Category } from '../../types';
+import { theme } from '../../constants/theme';
+import { ALL_CATEGORIES } from '../../constants/categories';
+import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
+import { Card } from '../../components/ui/Card';
+
+type ScanState = 'idle' | 'processing' | 'review';
+
+export default function ScanScreen() {
+  const router = useRouter();
+  const [scanState, setScanState] = useState<ScanState>('idle');
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [parsed, setParsed] = useState<ParsedReceipt | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Editable fields in review state
+  const [storeName, setStoreName] = useState('');
+  const [date, setDate] = useState('');
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState<Category>('Other');
+  const [notes, setNotes] = useState('');
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+
+  const runOCR = async (uri: string) => {
+    setScanState('processing');
+    try {
+      const lines: string[] = await TextRecognition.recognize(uri);
+      const rawText = lines.join('\n');
+      const result = parseReceiptText(rawText);
+
+      setParsed(result);
+      setStoreName(result.storeName);
+      setDate(format(new Date(result.date), 'yyyy-MM-dd'));
+      setAmount(result.totalAmount > 0 ? result.totalAmount.toFixed(2) : '');
+      setCategory(result.category);
+      setScanState('review');
+    } catch (err) {
+      Alert.alert(
+        'OCR Failed',
+        'Could not read the receipt. Please enter the details manually.',
+        [{ text: 'OK' }],
+      );
+      setParsed({ storeName: '', date: new Date().toISOString(), totalAmount: 0, category: 'Other', lineItems: [], rawText: '' });
+      setStoreName('');
+      setDate(format(new Date(), 'yyyy-MM-dd'));
+      setAmount('');
+      setCategory('Other');
+      setScanState('review');
+    }
+  };
+
+  const pickFromCamera = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission required', 'Camera access is needed to scan receipts.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      quality: 0.85,
+      allowsEditing: false,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setImageUri(result.assets[0].uri);
+      await runOCR(result.assets[0].uri);
+    }
+  };
+
+  const pickFromGallery = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission required', 'Photo library access is needed to import receipts.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setImageUri(result.assets[0].uri);
+      await runOCR(result.assets[0].uri);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!storeName.trim()) {
+      Alert.alert('Missing field', 'Please enter a store name.');
+      return;
+    }
+    const amountVal = parseFloat(amount.replace(',', '.'));
+    if (isNaN(amountVal) || amountVal < 0) {
+      Alert.alert('Invalid amount', 'Please enter a valid amount.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      let parsedDate: Date;
+      try {
+        parsedDate = new Date(date);
+        if (isNaN(parsedDate.getTime())) parsedDate = new Date();
+      } catch {
+        parsedDate = new Date();
+      }
+
+      await saveReceipt({
+        id: uuidv4(),
+        storeName: storeName.trim(),
+        date: parsedDate.toISOString(),
+        totalAmount: amountVal,
+        category,
+        rawText: parsed?.rawText,
+        imageUri: imageUri ?? undefined,
+        notes: notes.trim() || undefined,
+        lineItems: parsed?.lineItems ?? [],
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      Alert.alert('Saved!', 'Receipt has been saved successfully.', [
+        {
+          text: 'View Dashboard',
+          onPress: () => {
+            resetState();
+            router.push('/(tabs)');
+          },
+        },
+        { text: 'Scan Another', onPress: resetState },
+      ]);
+    } catch (err) {
+      Alert.alert('Error', 'Failed to save receipt. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetState = () => {
+    setScanState('idle');
+    setImageUri(null);
+    setParsed(null);
+    setStoreName('');
+    setDate('');
+    setAmount('');
+    setCategory('Other');
+    setNotes('');
+  };
+
+  // ─── Idle state ────────────────────────────────────────────────────────────
+  if (scanState === 'idle') {
+    return (
+      <View style={styles.screen}>
+        <LinearGradient
+          colors={[theme.colors.background, theme.colors.surface]}
+          style={styles.idleContainer}
+        >
+          <View style={styles.iconRing}>
+            <Ionicons name="scan" size={56} color={theme.colors.primary} />
+          </View>
+          <Text style={styles.idleTitle}>Scan a Receipt</Text>
+          <Text style={styles.idleSubtitle}>
+            Use your camera or import from gallery.{'\n'}ML Kit reads the text on-device — no internet needed.
+          </Text>
+
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.actionCard} onPress={pickFromCamera} activeOpacity={0.8}>
+              <LinearGradient
+                colors={[theme.colors.primaryDark, theme.colors.primary]}
+                style={styles.actionGradient}
+              >
+                <Ionicons name="camera" size={32} color="#fff" />
+                <Text style={styles.actionLabel}>Camera</Text>
+                <Text style={styles.actionSub}>Take a photo</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionCard} onPress={pickFromGallery} activeOpacity={0.8}>
+              <View style={[styles.actionGradient, { backgroundColor: theme.colors.surfaceHigh }]}>
+                <Ionicons name="images-outline" size={32} color={theme.colors.primary} />
+                <Text style={styles.actionLabel}>Gallery</Text>
+                <Text style={styles.actionSub}>Import an image</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.hint}>
+            Works with grocery, restaurant, electronics & more receipts
+          </Text>
+        </LinearGradient>
+      </View>
+    );
+  }
+
+  // ─── Processing state ───────────────────────────────────────────────────────
+  if (scanState === 'processing') {
+    return (
+      <View style={[styles.screen, styles.centered]}>
+        {imageUri && (
+          <Image source={{ uri: imageUri }} style={styles.processingImage} />
+        )}
+        <View style={styles.processingOverlay}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={styles.processingText}>Reading receipt...</Text>
+          <Text style={styles.processingSubText}>ML Kit is extracting text on-device</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // ─── Review state ───────────────────────────────────────────────────────────
+  return (
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.reviewContent}
+      keyboardShouldPersistTaps="handled"
+    >
+      {imageUri && (
+        <Image source={{ uri: imageUri }} style={styles.receiptThumb} resizeMode="cover" />
+      )}
+
+      <View style={styles.reviewHeader}>
+        <Text style={styles.reviewTitle}>Review & Confirm</Text>
+        <Text style={styles.reviewSub}>Edit any fields before saving</Text>
+      </View>
+
+      {/* Store name */}
+      <Card style={styles.fieldCard}>
+        <Text style={styles.fieldLabel}>Store / Merchant</Text>
+        <TextInput
+          style={styles.input}
+          value={storeName}
+          onChangeText={setStoreName}
+          placeholder="e.g. Whole Foods Market"
+          placeholderTextColor={theme.colors.textMuted}
+          autoCorrect={false}
+        />
+      </Card>
+
+      {/* Amount */}
+      <Card style={styles.fieldCard}>
+        <Text style={styles.fieldLabel}>Total Amount ($)</Text>
+        <TextInput
+          style={styles.input}
+          value={amount}
+          onChangeText={setAmount}
+          placeholder="0.00"
+          placeholderTextColor={theme.colors.textMuted}
+          keyboardType="decimal-pad"
+        />
+      </Card>
+
+      {/* Date */}
+      <Card style={styles.fieldCard}>
+        <Text style={styles.fieldLabel}>Date (YYYY-MM-DD)</Text>
+        <TextInput
+          style={styles.input}
+          value={date}
+          onChangeText={setDate}
+          placeholder="2026-05-08"
+          placeholderTextColor={theme.colors.textMuted}
+          keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
+        />
+      </Card>
+
+      {/* Category */}
+      <Card style={styles.fieldCard}>
+        <Text style={styles.fieldLabel}>Category</Text>
+        <TouchableOpacity
+          style={styles.categorySelector}
+          onPress={() => setShowCategoryPicker((v) => !v)}
+        >
+          <Badge category={category} />
+          <Ionicons
+            name={showCategoryPicker ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={theme.colors.textSecondary}
+          />
+        </TouchableOpacity>
+
+        {showCategoryPicker && (
+          <View style={styles.categoryGrid}>
+            {ALL_CATEGORIES.map((cat) => (
+              <TouchableOpacity
+                key={cat}
+                onPress={() => {
+                  setCategory(cat);
+                  setShowCategoryPicker(false);
+                }}
+                style={[
+                  styles.categoryOption,
+                  cat === category && {
+                    borderColor: theme.colors.category[cat],
+                    backgroundColor: `${theme.colors.category[cat]}22`,
+                  },
+                ]}
+              >
+                <Badge category={cat} size="sm" />
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </Card>
+
+      {/* Notes */}
+      <Card style={styles.fieldCard}>
+        <Text style={styles.fieldLabel}>Notes (optional)</Text>
+        <TextInput
+          style={[styles.input, styles.inputMultiline]}
+          value={notes}
+          onChangeText={setNotes}
+          placeholder="Add any notes..."
+          placeholderTextColor={theme.colors.textMuted}
+          multiline
+          numberOfLines={3}
+          textAlignVertical="top"
+        />
+      </Card>
+
+      {/* Line items preview */}
+      {parsed && parsed.lineItems.length > 0 && (
+        <Card style={styles.fieldCard}>
+          <Text style={styles.fieldLabel}>Detected Line Items ({parsed.lineItems.length})</Text>
+          {parsed.lineItems.slice(0, 8).map((item) => (
+            <View key={item.id} style={styles.lineItemRow}>
+              <Text style={styles.lineItemName} numberOfLines={1}>{item.name}</Text>
+              <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
+            </View>
+          ))}
+          {parsed.lineItems.length > 8 && (
+            <Text style={styles.moreItems}>
+              +{parsed.lineItems.length - 8} more items
+            </Text>
+          )}
+        </Card>
+      )}
+
+      <View style={styles.buttonRow}>
+        <Button
+          label="Discard"
+          onPress={resetState}
+          variant="secondary"
+          style={styles.btnHalf}
+        />
+        <Button
+          label="Save Receipt"
+          onPress={handleSave}
+          loading={saving}
+          style={styles.btnHalf}
+        />
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  centered: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Idle
+  idleContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.spacing.xl,
+    gap: theme.spacing.md,
+  },
+  iconRing: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    backgroundColor: theme.colors.primaryFaint,
+    borderWidth: 2,
+    borderColor: `${theme.colors.primary}44`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: theme.spacing.sm,
+  },
+  idleTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.xxl,
+    fontWeight: '800',
+  },
+  idleSubtitle: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.md,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.md,
+    marginTop: theme.spacing.md,
+    width: '100%',
+  },
+  actionCard: {
+    flex: 1,
+    borderRadius: theme.radius.xl,
+    overflow: 'hidden',
+  },
+  actionGradient: {
+    padding: theme.spacing.lg,
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: theme.radius.xl,
+  },
+  actionLabel: {
+    color: '#fff',
+    fontSize: theme.font.lg,
+    fontWeight: '700',
+  },
+  actionSub: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: theme.font.xs,
+  },
+  hint: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    textAlign: 'center',
+    marginTop: theme.spacing.sm,
+  },
+  // Processing
+  processingImage: {
+    width: '100%',
+    height: 260,
+    opacity: 0.35,
+  },
+  processingOverlay: {
+    position: 'absolute',
+    alignItems: 'center',
+    gap: 12,
+  },
+  processingText: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.xl,
+    fontWeight: '700',
+  },
+  processingSubText: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.sm,
+  },
+  // Review
+  reviewContent: {
+    padding: theme.spacing.md,
+    gap: theme.spacing.sm,
+    paddingBottom: 40,
+  },
+  receiptThumb: {
+    width: '100%',
+    height: 180,
+    borderRadius: theme.radius.lg,
+    marginBottom: theme.spacing.sm,
+  },
+  reviewHeader: {
+    marginBottom: theme.spacing.xs,
+  },
+  reviewTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.xl,
+    fontWeight: '800',
+  },
+  reviewSub: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.sm,
+  },
+  fieldCard: {
+    gap: theme.spacing.sm,
+  },
+  fieldLabel: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.xs,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  input: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.md,
+    backgroundColor: theme.colors.surfaceHigh,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  inputMultiline: {
+    minHeight: 72,
+    paddingTop: 10,
+  },
+  categorySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: theme.spacing.xs,
+  },
+  categoryOption: {
+    borderRadius: theme.radius.full,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    padding: 2,
+  },
+  lineItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  lineItemName: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.sm,
+    flex: 1,
+    marginRight: 8,
+  },
+  lineItemAmount: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    fontWeight: '600',
+  },
+  moreItems: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.sm,
+  },
+  btnHalf: {
+    flex: 1,
+  },
+});
