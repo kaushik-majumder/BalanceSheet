@@ -10,6 +10,7 @@ const path = require('path');
  *  - Removes `com.facebook.react:react-native:+` Maven dep (broken in RN 0.71+;
  *    the react-native-gradle-plugin now owns that dependency)
  *  - Upgrades ML Kit from 16.0.0-beta1 → 16.0.0 stable
+ *  - Adds `namespace` declaration (required by Android Gradle Plugin 8.0+)
  */
 module.exports = function withTextRecognitionFix(config) {
   return withDangerousMod(config, [
@@ -57,6 +58,16 @@ module.exports = function withTextRecognitionFix(config) {
         .replace(
           "implementation 'com.google.mlkit:text-recognition:16.0.0-beta1'",
           "implementation 'com.google.mlkit:text-recognition:16.0.0'",
+        )
+        // Add namespace — required by Android Gradle Plugin 8.0+ (Expo SDK 51).
+        // Without it the build fails with "Namespace not specified".
+        .replace(
+          "apply plugin: 'com.android.library'",
+          "apply plugin: 'com.android.library'\n",
+        )
+        .replace(
+          /android \{/,
+          "android {\n    namespace 'com.reactnativetextrecognition'",
         );
 
       fs.writeFileSync(gradlePath, gradle);
