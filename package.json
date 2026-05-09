@@ -11,8 +11,12 @@
     "test:watch": "jest --watch",
     "prebuild:android": "jest",
     "prebuild:ios": "jest",
-    "build:android": "npx eas-cli build --platform android",
-    "build:ios": "npx eas-cli build --platform ios"
+    "prebuild:android-dev": "jest",
+    "prebuild:ios-dev": "jest",
+    "build:android": "npx eas-cli build --platform android --profile production",
+    "build:ios": "npx eas-cli build --platform ios --profile production",
+    "build:android-dev": "npx eas-cli build --platform android --profile development",
+    "build:ios-dev": "npx eas-cli build --platform ios --profile development"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.0.2",
