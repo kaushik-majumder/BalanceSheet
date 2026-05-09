@@ -1,9 +1,19 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { View, StyleSheet } from 'react-native';
+import { Alert, Pressable, View, StyleSheet } from 'react-native';
 import { theme } from '../../constants/theme';
+import { useAuth } from '../../lib/AuthContext';
 
 export default function TabLayout() {
+  const { signOut } = useAuth();
+
+  const confirmSignOut = () => {
+    Alert.alert('Sign out?', 'You will need to sign in again to use the app.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign out', style: 'destructive', onPress: () => signOut() },
+    ]);
+  };
+
   return (
     <Tabs
       screenOptions={{
@@ -22,6 +32,11 @@ export default function TabLayout() {
           title: 'Dashboard',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="grid-outline" size={size} color={color} />
+          ),
+          headerRight: () => (
+            <Pressable onPress={confirmSignOut} hitSlop={10} style={{ paddingRight: 16 }}>
+              <Ionicons name="log-out-outline" size={22} color={theme.colors.textPrimary} />
+            </Pressable>
           ),
         }}
       />
