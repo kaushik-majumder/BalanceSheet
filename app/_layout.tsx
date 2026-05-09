@@ -24,6 +24,25 @@ export default function RootLayout() {
   );
 }
 
+/**
+ * Segments that the route guard owns and may redirect away from. Anything
+ * else (e.g. /settings, /edit/[id], or any future modal route) is treated as
+ * "free" — the user explicitly pushed it onto the stack and the guard should
+ * leave them alone. Without this allowlist, opening a modal triggers the
+ * effect below, which sees target='(tabs)' !== current='settings' and bounces
+ * straight back, making the icon appear to do nothing.
+ */
+const GATED_SEGMENTS = new Set([
+  '',
+  '(tabs)',
+  'onboarding',
+  'auth',
+  'verify-email',
+  'profile-setup',
+  'biometric-setup',
+  'lock',
+]);
+
 function RootStack() {
   const {
     initializing,
@@ -41,6 +60,8 @@ function RootStack() {
 
   useEffect(() => {
     if (initializing) return;
+    const current = segments[0] ?? '';
+    if (!GATED_SEGMENTS.has(current)) return;
     const target = pickTarget({
       user,
       onboardingSeen,
@@ -51,7 +72,6 @@ function RootStack() {
       biometricAsked,
       biometricUnlocked,
     });
-    const current = segments[0] ?? '';
     if (target !== current) {
       router.replace(targetToHref(target) as never);
     }
