@@ -6,6 +6,11 @@ module.exports = ({ config }) => {
     name: 'Receipt Scanner',
     slug: 'receipt-scanner',
     version: '1.0.0',
+    runtimeVersion: { policy: 'appVersion' },
+    updates: {
+      url: 'https://u.expo.dev/bbdefab5-4cc5-4480-96a9-8ece7eb913a5',
+      fallbackToCacheTimeout: 0,
+    },
     orientation: 'portrait',
     icon: './assets/icon.png',
     userInterfaceStyle: 'dark',
