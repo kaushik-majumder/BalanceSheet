@@ -27,7 +27,8 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_IMAGES"
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.RECORD_AUDIO"
       ],
       "package": "com.yourname.receiptscanner"
     },
@@ -49,6 +50,15 @@
     "experiments": {
       "typedRoutes": true
     },
-    "scheme": "receipt-scanner"
+    "scheme": "receipt-scanner",
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "bbdefab5-4cc5-4480-96a9-8ece7eb913a5"
+      }
+    },
+    "owner": "kmaz285"
   }
 }
