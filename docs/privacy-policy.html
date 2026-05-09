@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Privacy Policy — Receipt Scanner</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #1f2937; line-height: 1.6; }
+  h1 { color: #10B981; border-bottom: 2px solid #10B981; padding-bottom: 8px; }
+  h2 { color: #0F172A; margin-top: 32px; }
+  code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+  .effective { color: #6b7280; font-size: 0.9em; }
+</style>
+</head>
+<body>
+
+<h1>Receipt Scanner — Privacy Policy</h1>
+<p class="effective">Effective: 2026-05-09</p>
+
+<p>Receipt Scanner ("the app") is a personal expense-tracking utility that runs entirely on your device. This policy describes what the app does and does not do with your data.</p>
+
+<h2>What data the app accesses</h2>
+<ul>
+  <li><strong>Camera:</strong> only when you tap "Scan a Receipt" → "Camera". Used to capture an image of a paper receipt.</li>
+  <li><strong>Photo library:</strong> only when you tap "Scan a Receipt" → "Gallery". Used to import an existing receipt image.</li>
+  <li><strong>Receipt data you enter or capture:</strong> store name, amount, date, category, optional notes, and the receipt image you choose to keep.</li>
+</ul>
+
+<h2>Where the data is stored</h2>
+<p>All data — including the OCR-extracted text, the parsed fields, and any receipt images you save — is stored <strong>only on your device</strong>, in a local SQLite database (<code>receipts.db</code>) inside the app's private storage area.</p>
+
+<h2>What the app does <em>not</em> do</h2>
+<ul>
+  <li>The app does <strong>not</strong> upload your receipts, images, or any other personal data to any server.</li>
+  <li>The app does <strong>not</strong> use third-party analytics, advertising, or tracking SDKs.</li>
+  <li>The app does <strong>not</strong> share your data with anyone.</li>
+  <li>The app does <strong>not</strong> require an account, login, or internet connection to function.</li>
+</ul>
+
+<h2>How OCR (text recognition) works</h2>
+<p>Text extraction uses <strong>Google ML Kit</strong> (on Android) and <strong>Apple Vision</strong> (on iOS). Both run entirely <em>on-device</em>; receipt images are never transmitted to Google, Apple, or any other party.</p>
+
+<h2>Permissions</h2>
+<table>
+  <tr><th align="left">Permission</th><th align="left">Why</th></tr>
+  <tr><td><code>CAMERA</code></td><td>Photograph paper receipts (only when you initiate)</td></tr>
+  <tr><td><code>READ_MEDIA_IMAGES</code> / <code>READ_EXTERNAL_STORAGE</code></td><td>Import receipt images from your gallery (only when you initiate)</td></tr>
+</table>
+
+<h2>Deleting your data</h2>
+<p>You can delete any individual receipt from inside the app (Edit → Delete). To remove all data, uninstall the app — Android removes the app's private storage on uninstall.</p>
+
+<h2>Children's privacy</h2>
+<p>The app does not knowingly collect data from anyone, including children, because it does not transmit data off-device.</p>
+
+<h2>Changes to this policy</h2>
+<p>If material changes are made to how the app handles data, an updated version of this policy will be published at the same URL with a new effective date.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy: <a href="https://github.com/kaushik-majumder/BalanceSheet/issues">open an issue on GitHub</a>.</p>
+
+</body>
+</html>
