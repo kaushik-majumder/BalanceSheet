@@ -504,7 +504,13 @@ async function attachLineItems(rows: RawRow[]): Promise<Receipt[]> {
       id: r.id,
       name: r.name,
       amount: r.amount,
-      category: (r.category ?? undefined) as Receipt['category'] | undefined,
+      // Default to 'Other' when the DB row has a null/empty category —
+      // covers legacy items written before per-item categorization and
+      // any AI/regex result that slipped through without a category.
+      // Downstream code (dashboard, drilldown, edit) can always rely on
+      // a non-empty category string.
+      category:
+        r.category && r.category.trim() ? r.category : 'Other',
     });
     byReceiptId.set(r.receipt_id, list);
   }
