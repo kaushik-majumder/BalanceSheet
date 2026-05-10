@@ -450,8 +450,8 @@ export default function ScanScreen() {
             style={styles.aiChipError}
           >
             <Ionicons name="alert-circle-outline" size={14} color={theme.colors.error} />
-            <Text style={styles.aiChipErrorText} numberOfLines={1}>
-              AI parse failed — tap to retry
+            <Text style={styles.aiChipErrorText} numberOfLines={2}>
+              AI parse failed: {aiError}. Tap to retry.
             </Text>
           </TouchableOpacity>
         )}

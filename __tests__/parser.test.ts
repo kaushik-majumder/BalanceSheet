@@ -602,6 +602,40 @@ describe('parseReceiptText - two-column OCR (names and prices on separate lines)
     }
   });
 
+  it("doesn't pull Costco footer text (CUSTOMER COPY, IMPORTANT, AID hex, barcode stamp) as items", () => {
+    const ocr = [
+      'Costco',
+      '1571579 12 HANGING 19.99',
+      '1295582 ROSE 19.99',
+      '*****Bottom of basket*****',
+      '*****BOB Count*****',
+      '313963 KS ORG EGGS 12.49',
+      'SUBTOTAL 52.47',
+      'TAX 6.82',
+      'TOTAL 59.29',
+      'XXXXXXXXXXXX0933',
+      'ACCT: MASTERCARD',
+      'REFERENCE',
+      '#: 0010013870 C',
+      'AUTH #: 3292E',
+      'A0000000041010',
+      '0000008000 E800',
+      'P (H)HST 13%',
+      '01 APPROVED - THANK YOU 027',
+      'IMPORTANT - retain this copy',
+      'for your records',
+      'CUSTOMER COPY',
+      '20267/057/0E 19 01 09 1591',
+    ].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    expect(items.length).toBe(3);
+    for (const item of items) {
+      expect(item.name).not.toMatch(
+        /reference|important|customer|retain|records|approved|asket|chdhst|^[A-F0-9]+$/i,
+      );
+    }
+  });
+
   it('does not over-match: "First Aid Kit" survives the AID skip', () => {
     // 'First Aid Kit' contains 'aid' but Kit isn't 8+ hex chars, so the
     // EMV-style rule shouldn't fire. The line itself isn't picked as an

@@ -334,18 +334,26 @@ function extractSubtotalAmount(text: string): number | undefined {
  */
 const SKIP_LINE_RE = new RegExp(
   [
-    '\\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|amount|approval|approved|terminal|signature|authorization|invoice)\\b',
+    '\\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|amount|approval|approved|terminal|signature|authorization|invoice|customer|important|retain|appreciate|received)\\b',
+    '\\b(thank\\s+you|please\\s+come)\\b',
+    '\\bfor\\s+(your|hour)\\s+records?\\b',
     '\\b(?:store|st|op|te|tr|rrn|trm|whse)\\s*#?\\s*\\d{3,}',
     '\\b(?:aid|tc|auth|reference)\\s*#?\\s*[a-fA-F0-9]{6,}\\b',
     '\\b(member|membership)\\b',
     '\\bbottom\\s+of\\s+basket\\b',
-    '\\bbob\\s+count\\b',
+    '\\b(bob|bot|btm)\\s+count\\b',
+    '\\basket\\b',                       // OCR mangling of "basket"
+    '\\bp\\s*\\(?h\\)?\\s*hst\\b',       // tax-rate label "P (H)HST"
+    '\\bp\\s*chdhst\\b',                 // OCR variant of P (H)HST
     '\\bitems?\\s+sold\\b',
-    '^\\s*\\*+\\s*$',                  // separator lines like "*****"
-    '^\\s*-+\\s*$',                    // separator lines like "------"
-    '^\\s*x{4,}[\\s\\d]*\\d{2,}\\s*$', // masked card "XXXXXXXXXXXX0933"
+    '^\\s*\\*+\\s*$',                    // separator "*****"
+    '^\\s*-+\\s*$',                      // separator "------"
+    '^\\s*x{4,}[\\s\\d]*\\d{2,}\\s*$',   // masked card "XXXXXXXXXXXX0933"
     '^\\s*[A-Z]\\d[A-Z]\\s+\\d[A-Z]\\d\\s*$',
     '^\\s*\\d{5}(?:-\\d{4})?\\s*$',
+    '^\\s*[A-F0-9]{10,}\\s*$',           // hex-only lines (EMV tag values)
+    '^\\s*[A-F0-9]{6,}\\s+[A-F0-9]{3,}\\s*$', // two hex words on one line
+    '^\\s*\\d+/\\d+/\\d+(?:\\s|$)',      // 26267/057/0E ... barcode stamp
   ].join('|'),
   'i',
 );
@@ -459,16 +467,21 @@ function extractPairedItems(
   // weight/quantity prefix like "10LB", "1 OZ", "5KG", "12PK".
   const itemShapeRe =
     /\b\d{8,14}\b|^\s*\d+\s*(lb|oz|kg|g|ml|l|pk|pck|ct|count|pack)\b/i;
+  // Trigger words that mean we've passed the items block. After this we
+  // continue collecting price-only lines (ML Kit two-column OCR often
+  // puts prices AFTER the labels block) but stop adding new names — any
+  // text after totals is footer / payment-block noise.
+  const totalsTriggerRe =
+    /\b(total|sub-?total|tax|hst|gst|pst|qst|vat|amount|tend(?:er)?|approval|approved)\b/i;
   let inItemsBlock = false;
+  let pastTotalsBlock = false;
 
   for (const line of lines) {
     if (re.skipRe.test(line)) {
-      // Always skip total/tax/subtotal/transaction-id/payment lines —
-      // never use them as either names or prices. Don't BREAK though:
-      // ML Kit two-column OCR sometimes interleaves the labels block
-      // (SUBTOTAL/HST/TOTAL on the left) BEFORE the prices block (the
-      // entire right column on the right). Breaking too early discards
-      // every line-item price.
+      // Skip entirely — but if it was a totals-block trigger, mark that
+      // we've passed the items block so we stop buffering footer-style
+      // names below.
+      if (totalsTriggerRe.test(line)) pastTotalsBlock = true;
       continue;
     }
     if (!inItemsBlock) {
@@ -517,7 +530,11 @@ function extractPairedItems(
       continue;
     }
 
-    // Name-ish line (has at least one letter).
+    // Name-ish line (has at least one letter). Once we've passed the
+    // totals block we stop buffering names — anything down here is
+    // footer / payment-block noise (CUSTOMER COPY, AUTH codes, barcode
+    // stamps, etc.).
+    if (pastTotalsBlock) continue;
     const name = cleanItemName(line);
     if (name && re.alphaRe.test(name) && name.length >= 2) {
       pendingNames.push(name);
