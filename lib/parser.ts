@@ -29,6 +29,39 @@ export function parseReceiptText(rawText: string): ParsedReceipt {
     excluded,
   );
 
+  // Sanity guards: regex sometimes captures the wrong number when OCR
+  // mixes columns. Drop values that fail these invariants — leftover-prices
+  // recovery below has a chance to fix them up.
+  //
+  //   1. Subtotal CANNOT exceed total.
+  //   2. Subtotal CANNOT equal total when tax is also extracted (because
+  //      tax + subtotal must equal total, so tax would be ≈ 0). If tax
+  //      is unknown but subtotal == total, the regex almost certainly
+  //      captured the wrong line twice; drop subtotal as suspect.
+  //   3. Tax CANNOT exceed subtotal.
+  if (
+    subtotalAmount != null &&
+    totalAmount > 0 &&
+    subtotalAmount > totalAmount + 0.02
+  ) {
+    subtotalAmount = undefined;
+  }
+  if (
+    subtotalAmount != null &&
+    totalAmount > 0 &&
+    taxAmount == null &&
+    Math.abs(subtotalAmount - totalAmount) < 0.02
+  ) {
+    subtotalAmount = undefined;
+  }
+  if (
+    taxAmount != null &&
+    subtotalAmount != null &&
+    taxAmount > subtotalAmount + 0.02
+  ) {
+    taxAmount = undefined;
+  }
+
   // Two-column receipts often put the SUBTOTAL/HST/TOTAL labels on
   // separate lines from their amounts, so the same-line regex returns
   // undefined. The paired-parser leaves the totals-block prices in
@@ -291,8 +324,12 @@ const SKIP_LINE_RE = new RegExp(
   ].join('|'),
   'i',
 );
-const PRICE_AT_END_RE = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
-const PRICE_ONLY_RE = /^\s*\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
+// Trailing letter is the tax-status flag (Walmart 'J' / 'D', Costco 'E',
+// etc.). It's printed as uppercase but real OCR routinely returns lowercase
+// for it (the user hit "5.00 d" being treated as a name instead of a
+// price), so we accept either case.
+const PRICE_AT_END_RE = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Za-z])?\s*$/;
+const PRICE_ONLY_RE = /^\s*\$?\s*(\d{1,5}\.\d{2})\s*([A-Za-z])?\s*$/;
 const UPC_ONLY_RE = /^\s*\d{8,14}\s*$/;
 const ALPHA_RE = /[a-z]/i;
 

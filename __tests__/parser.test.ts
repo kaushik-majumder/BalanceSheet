@@ -522,6 +522,42 @@ describe('parseReceiptText - two-column OCR (names and prices on separate lines)
     }
   });
 
+  it('treats "5.00 d" (lowercase tax-status letter) as a price, not a name', () => {
+    // Real OCR sometimes returns the trailing tax-status flag in
+    // lowercase ("d" instead of "D"). Earlier the regex required
+    // uppercase, so the line was buffered as a name and the matching
+    // item got paired with the WRONG price.
+    const ocr = [
+      'Walmart',
+      'YOGA MAT 840737122350',
+      'CO OPP BB S7 697678203208',
+      '$21.98 J',
+      '5.00 d',
+    ].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    expect(items.length).toBe(2);
+    expect(items[0].amount).toBe(21.98);
+    expect(items[1].amount).toBe(5.0);
+    for (const item of items) {
+      expect(item.name).not.toMatch(/^[\d.]+\s*[a-z]?$/i);
+    }
+  });
+
+  it('drops subtotal if same-line regex captures a value greater than total', () => {
+    // Defensive: if SUBTOTAL gets matched against the grand-total amount
+    // (because OCR mixed up columns), don't trust it. Better to leave
+    // subtotal undefined than to display "Subtotal $127.60 / Total $127.60".
+    const ocr = [
+      'Walmart',
+      '10LB NEOPREN 191730242300 14.97',
+      'SUBTOTAL 127.60',
+      'TOTAL 127.60',
+    ].join('\n');
+    const r = parseReceiptText(ocr);
+    expect(r.totalAmount).toBe(127.6);
+    expect(r.subtotalAmount).toBeUndefined();
+  });
+
   it('does not over-match: "First Aid Kit" survives the AID skip', () => {
     // 'First Aid Kit' contains 'aid' but Kit isn't 8+ hex chars, so the
     // EMV-style rule shouldn't fire. The line itself isn't picked as an
