@@ -14,6 +14,7 @@ import {
   Pressable,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,6 +23,7 @@ import TextRecognition from 'react-native-text-recognition';
 import { v4 as uuidv4 } from 'uuid';
 import { saveReceipt } from '../../lib/database';
 import { parseReceiptText } from '../../lib/parser';
+import { parseReceiptWithGemini } from '../../lib/geminiParseReceipt';
 import { ParsedReceipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES } from '../../constants/categories';
@@ -50,6 +52,8 @@ export default function ScanScreen() {
   const [showAllItems, setShowAllItems] = useState(false);
   const [editingItem, setEditingItem] = useState<LineItem | null>(null);
   const [items, setItems] = useState<LineItem[]>([]);
+  const [aiPending, setAiPending] = useState(false);
+  const [aiApplied, setAiApplied] = useState(false);
 
   const runOCR = async (uri: string) => {
     setScanState('processing');
@@ -66,7 +70,38 @@ export default function ScanScreen() {
       setTax(result.taxAmount != null ? result.taxAmount.toFixed(2) : '');
       setCategory(result.category);
       setItems(result.lineItems);
+      setAiApplied(false);
       setScanState('review');
+
+      // Fire AI parse in parallel. The user sees the regex result
+      // immediately; when Gemini returns we replace the state in-place
+      // if the AI parse looks better (more items, or has totals the
+      // regex missed).
+      const geminiKey = (Constants.expoConfig?.extra as { geminiApiKey?: string } | undefined)
+        ?.geminiApiKey;
+      if (geminiKey) {
+        setAiPending(true);
+        parseReceiptWithGemini(rawText, geminiKey)
+          .then((aiResult) => {
+            if (!aiResult.ok) return;
+            const ai = aiResult.receipt;
+            // Trust AI when it found at least as many items, OR found
+            // totals (subtotal/tax) that the regex missed.
+            const aiBetter =
+              ai.lineItems.length >= result.lineItems.length ||
+              (ai.subtotalAmount != null && result.subtotalAmount == null) ||
+              (ai.taxAmount != null && result.taxAmount == null);
+            if (!aiBetter) return;
+            setStoreName(ai.storeName);
+            if (ai.date) setDate(format(new Date(ai.date), 'yyyy-MM-dd'));
+            if (ai.totalAmount > 0) setAmount(ai.totalAmount.toFixed(2));
+            if (ai.subtotalAmount != null) setSubtotal(ai.subtotalAmount.toFixed(2));
+            if (ai.taxAmount != null) setTax(ai.taxAmount.toFixed(2));
+            setItems(ai.lineItems);
+            setAiApplied(true);
+          })
+          .finally(() => setAiPending(false));
+      }
     } catch (err) {
       Alert.alert(
         'OCR Failed',
@@ -211,6 +246,8 @@ export default function ScanScreen() {
     setItems([]);
     setShowAllItems(false);
     setEditingItem(null);
+    setAiPending(false);
+    setAiApplied(false);
   };
 
   const saveEditedItem = (updated: LineItem) => {
@@ -307,6 +344,18 @@ export default function ScanScreen() {
       <View style={styles.reviewHeader}>
         <Text style={styles.reviewTitle}>Review & Confirm</Text>
         <Text style={styles.reviewSub}>Edit any fields before saving</Text>
+        {aiPending && (
+          <View style={styles.aiChipPending}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={styles.aiChipText}>Improving with AI…</Text>
+          </View>
+        )}
+        {!aiPending && aiApplied && (
+          <View style={styles.aiChipApplied}>
+            <Ionicons name="sparkles" size={14} color={theme.colors.primary} />
+            <Text style={styles.aiChipText}>AI improved this receipt</Text>
+          </View>
+        )}
       </View>
 
       {/* Store name */}
@@ -773,6 +822,35 @@ const styles = StyleSheet.create({
   reviewSub: {
     color: theme.colors.textSecondary,
     fontSize: theme.font.sm,
+  },
+  aiChipPending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.primaryFaint,
+    marginTop: 8,
+  },
+  aiChipApplied: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.primaryFaint,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    marginTop: 8,
+  },
+  aiChipText: {
+    color: theme.colors.primary,
+    fontSize: theme.font.xs,
+    fontWeight: '700',
   },
   fieldCard: {
     gap: theme.spacing.sm,
