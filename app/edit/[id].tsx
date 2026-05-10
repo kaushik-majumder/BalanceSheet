@@ -342,6 +342,30 @@ export default function EditReceiptScreen() {
         </Card>
       )}
 
+      {/* Raw OCR text — useful for debugging "why didn't the parser
+          extract anything?" */}
+      {receipt.rawText && (
+        <TouchableOpacity
+          onPress={() =>
+            Alert.alert(
+              'Raw OCR text',
+              receipt.rawText ?? '(empty)',
+              [{ text: 'OK' }],
+            )
+          }
+          style={styles.rawTextLink}
+        >
+          <Ionicons
+            name="document-text-outline"
+            size={14}
+            color={theme.colors.textSecondary}
+          />
+          <Text style={styles.rawTextLinkText}>
+            Show raw OCR text ({receipt.rawText.length} chars)
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* Actions */}
       <Button
         label="Save Changes"
@@ -508,6 +532,19 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontSize: theme.font.lg,
     fontWeight: '800',
+  },
+  rawTextLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: theme.spacing.sm,
+    paddingVertical: 8,
+  },
+  rawTextLinkText: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.xs,
+    fontWeight: '600',
   },
   saveBtn: {
     marginTop: theme.spacing.sm,

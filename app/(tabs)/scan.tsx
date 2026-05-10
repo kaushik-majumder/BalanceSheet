@@ -371,20 +371,46 @@ export default function ScanScreen() {
         />
       </Card>
 
-      {/* Line items preview */}
+      {/* Line items preview with per-item category badges */}
       {parsed && parsed.lineItems.length > 0 && (
         <Card style={styles.fieldCard}>
           <Text style={styles.fieldLabel}>Detected Line Items ({parsed.lineItems.length})</Text>
-          {parsed.lineItems.slice(0, 8).map((item) => (
+          {parsed.lineItems.slice(0, 12).map((item) => (
             <View key={item.id} style={styles.lineItemRow}>
-              <Text style={styles.lineItemName} numberOfLines={1}>{item.name}</Text>
+              <Text style={styles.lineItemName} numberOfLines={1}>
+                {item.name}
+              </Text>
+              {item.category && (
+                <Badge category={item.category} size="sm" />
+              )}
               <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
             </View>
           ))}
-          {parsed.lineItems.length > 8 && (
+          {parsed.lineItems.length > 12 && (
             <Text style={styles.moreItems}>
-              +{parsed.lineItems.length - 8} more items
+              +{parsed.lineItems.length - 12} more items
             </Text>
+          )}
+
+          {(parsed.subtotalAmount != null || parsed.taxAmount != null) && (
+            <View style={styles.parsedTotals}>
+              {parsed.subtotalAmount != null && (
+                <View style={styles.parsedTotalsRow}>
+                  <Text style={styles.parsedTotalsLabel}>Detected subtotal</Text>
+                  <Text style={styles.parsedTotalsValue}>
+                    ${parsed.subtotalAmount.toFixed(2)}
+                  </Text>
+                </View>
+              )}
+              {parsed.taxAmount != null && (
+                <View style={styles.parsedTotalsRow}>
+                  <Text style={styles.parsedTotalsLabel}>Detected tax</Text>
+                  <Text style={styles.parsedTotalsValue}>
+                    ${parsed.taxAmount.toFixed(2)}
+                  </Text>
+                </View>
+              )}
+            </View>
           )}
         </Card>
       )}
@@ -584,6 +610,8 @@ const styles = StyleSheet.create({
   lineItemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
     paddingVertical: 4,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
@@ -592,12 +620,34 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     fontSize: theme.font.sm,
     flex: 1,
-    marginRight: 8,
+    marginRight: 4,
   },
   lineItemAmount: {
     color: theme.colors.textPrimary,
     fontSize: theme.font.sm,
     fontWeight: '600',
+    minWidth: 56,
+    textAlign: 'right',
+  },
+  parsedTotals: {
+    marginTop: theme.spacing.sm,
+    paddingTop: theme.spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.borderLight,
+  },
+  parsedTotalsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  parsedTotalsLabel: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.xs,
+  },
+  parsedTotalsValue: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.xs,
+    fontWeight: '700',
   },
   moreItems: {
     color: theme.colors.textMuted,
