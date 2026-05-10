@@ -92,10 +92,17 @@ export function parseReceiptText(rawText: string): ParsedReceipt {
     }
   }
 
+  // Fold discount / markdown lines (negative amounts) into the item
+  // they apply to. Receipts from Costco / Walmart / many grocers print
+  // the discount as a separate line right after the original item
+  // (sometimes referencing its SKU). Merging them gives a cleaner
+  // breakdown — one line per actual product at its real paid price.
+  const mergedLineItems = mergeDiscountLines(lineItems);
+
   // Derive multi-select tags from the unique categories present in the
   // line items. Falls back to the receipt-level category when there are
   // no items so the chip group is never empty.
-  const categoryTags = deriveTags(lineItems, category);
+  const categoryTags = deriveTags(mergedLineItems, category);
 
   return {
     storeName,
@@ -105,9 +112,78 @@ export function parseReceiptText(rawText: string): ParsedReceipt {
     taxAmount,
     category,
     categoryTags,
-    lineItems,
+    lineItems: mergedLineItems,
     rawText,
   };
+}
+
+/**
+ * Fold negative-amount line items into the item they're discounting.
+ *
+ * Two heuristics, applied in order:
+ *
+ *   1. **SKU reference** — if the discount line's name contains a digit
+ *      sequence (≥4 digits) that's also present in a preceding item's
+ *      name, merge into that item. This is how Costco / Sam's Club /
+ *      many warehouse stores format their TPD/markdown lines
+ *      ("TPD/1993379" → merge into the item whose name starts with
+ *      "1993379").
+ *   2. **Adjacency** — otherwise, merge into the immediately preceding
+ *      item with a positive amount. This handles generic "DISC",
+ *      "MEMBER SAVE", or any country's markdown line printed below the
+ *      item it applies to.
+ *
+ * The merged item's amount is clamped to 0 so a discount that exceeds
+ * the item price doesn't produce a negative product. A discount with
+ * no matchable target is left alone so the user can fix it manually.
+ */
+export function mergeDiscountLines(items: LineItem[]): LineItem[] {
+  if (items.length < 2) return items;
+
+  const result: LineItem[] = items.map((it) => ({ ...it }));
+  const dropped = new Set<number>();
+  const digitRe = /\d{4,}/;
+
+  for (let i = 0; i < result.length; i++) {
+    if (dropped.has(i)) continue;
+    const item = result[i];
+    if (item.amount >= 0) continue;
+
+    let targetIdx = -1;
+
+    // 1. SKU-reference match.
+    const skuMatch = item.name.match(digitRe);
+    if (skuMatch) {
+      const sku = skuMatch[0];
+      for (let j = 0; j < i; j++) {
+        if (dropped.has(j)) continue;
+        if (result[j].amount > 0 && result[j].name.includes(sku)) {
+          targetIdx = j;
+          break;
+        }
+      }
+    }
+
+    // 2. Adjacency fallback — nearest preceding positive line.
+    if (targetIdx === -1) {
+      for (let j = i - 1; j >= 0; j--) {
+        if (dropped.has(j)) continue;
+        if (result[j].amount > 0) {
+          targetIdx = j;
+          break;
+        }
+      }
+    }
+
+    if (targetIdx === -1) continue;
+
+    const target = result[targetIdx];
+    const newAmount = Math.max(0, target.amount + item.amount);
+    result[targetIdx] = { ...target, amount: round2(newAmount) };
+    dropped.add(i);
+  }
+
+  return result.filter((_, idx) => !dropped.has(idx));
 }
 
 function deriveTags(items: LineItem[], fallback: string): string[] {
@@ -361,8 +437,11 @@ const SKIP_LINE_RE = new RegExp(
 // etc.). It's printed as uppercase but real OCR routinely returns lowercase
 // for it (the user hit "5.00 d" being treated as a name instead of a
 // price), so we accept either case.
-const PRICE_AT_END_RE = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Za-z])?\s*$/;
-const PRICE_ONLY_RE = /^\s*\$?\s*(\d{1,5}\.\d{2})\s*([A-Za-z])?\s*$/;
+// Trailing `-` (e.g. "15.00-") is how Costco / many warehouse chains
+// mark a discount/markdown amount. Leading `-` is the more standard
+// notation. Capture either so discount lines parse as negative amounts.
+const PRICE_AT_END_RE = /\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*$/;
+const PRICE_ONLY_RE = /^\s*\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*$/;
 const UPC_ONLY_RE = /^\s*\d{8,14}\s*$/;
 const ALPHA_RE = /[a-z]/i;
 
@@ -414,8 +493,12 @@ function extractInlineItems(
     if (skipRe.test(line)) continue;
     const priceMatch = line.match(priceRe);
     if (!priceMatch) continue;
-    const amount = parseFloat(priceMatch[1]);
-    if (!(amount > 0 && amount < 10_000)) continue;
+    // priceMatch groups: 1=leading-minus, 2=number, 3=trailing-minus, 4=letter
+    const negative = priceMatch[1] === '-' || priceMatch[3] === '-';
+    const magnitude = parseFloat(priceMatch[2]);
+    if (!Number.isFinite(magnitude) || magnitude >= 10_000) continue;
+    if (magnitude === 0) continue;
+    const amount = negative ? -magnitude : magnitude;
     const rawName = line.replace(priceMatch[0], '').replace(/\s+/g, ' ').trim();
     const name = cleanItemName(rawName);
     if (!name || !alphaRe.test(name)) continue;
@@ -493,8 +576,12 @@ function extractPairedItems(
     // Inline match — emit immediately and don't buffer.
     const inline = line.match(re.priceAtEndRe);
     if (inline) {
-      const amount = parseFloat(inline[1]);
-      if (!(amount > 0 && amount < 10_000)) continue;
+      // Groups: 1=leading-minus, 2=number, 3=trailing-minus, 4=letter.
+      const negative = inline[1] === '-' || inline[3] === '-';
+      const magnitude = parseFloat(inline[2]);
+      if (!Number.isFinite(magnitude) || magnitude >= 10_000 || magnitude === 0)
+        continue;
+      const amount = negative ? -magnitude : magnitude;
       const rawName = line.replace(inline[0], '').replace(/\s+/g, ' ').trim();
       const name = cleanItemName(rawName);
       if (name && re.alphaRe.test(name) && name.length >= 2) {
@@ -506,11 +593,13 @@ function extractPairedItems(
         });
       } else if (
         (name === '' || !re.alphaRe.test(name)) &&
+        amount > 0 &&
         !re.excludedAmounts.has(round2(amount))
       ) {
         // The line was JUST a price (no name on the same line) — buffer
         // it, unless it equals the receipt's subtotal/tax/total amount,
         // in which case it's a totals-block price, not a per-item price.
+        // Skip negative price-only lines: they'd dangle without a name.
         pendingPrices.push({ amount });
       }
       continue;
@@ -519,11 +608,13 @@ function extractPairedItems(
     // Price-only line.
     const priceOnly = line.match(re.priceOnlyRe);
     if (priceOnly) {
-      const amount = parseFloat(priceOnly[1]);
+      const negative = priceOnly[1] === '-' || priceOnly[3] === '-';
+      const magnitude = parseFloat(priceOnly[2]);
+      const amount = negative ? -magnitude : magnitude;
       if (
-        amount > 0 &&
-        amount < 10_000 &&
-        !re.excludedAmounts.has(round2(amount))
+        magnitude > 0 &&
+        magnitude < 10_000 &&
+        !re.excludedAmounts.has(round2(Math.abs(amount)))
       ) {
         pendingPrices.push({ amount });
       }
