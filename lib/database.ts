@@ -197,24 +197,39 @@ export async function saveReceipt(receipt: Receipt): Promise<void> {
 }
 
 export async function updateReceipt(receipt: Receipt): Promise<void> {
-  await db.runAsync(
-    `UPDATE receipts
-     SET store_name=?, date=?, total_amount=?, subtotal_amount=?, tax_amount=?,
-         category=?, category_tags=?, notes=?, updated_at=?
-     WHERE id=?`,
-    [
-      receipt.storeName,
-      receipt.date,
-      receipt.totalAmount,
-      receipt.subtotalAmount ?? null,
-      receipt.taxAmount ?? null,
-      receipt.category,
-      serializeTags(receipt.categoryTags),
-      receipt.notes ?? null,
-      new Date().toISOString(),
-      receipt.id,
-    ],
-  );
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE receipts
+       SET store_name=?, date=?, total_amount=?, subtotal_amount=?, tax_amount=?,
+           category=?, category_tags=?, notes=?, updated_at=?
+       WHERE id=?`,
+      [
+        receipt.storeName,
+        receipt.date,
+        receipt.totalAmount,
+        receipt.subtotalAmount ?? null,
+        receipt.taxAmount ?? null,
+        receipt.category,
+        serializeTags(receipt.categoryTags),
+        receipt.notes ?? null,
+        new Date().toISOString(),
+        receipt.id,
+      ],
+    );
+
+    // Replace line items if the caller provided a new list. Caller can
+    // omit `lineItems` to leave them unchanged (the previous behavior
+    // that the dashboard relied on for non-item edits).
+    if (receipt.lineItems !== undefined) {
+      await db.runAsync(`DELETE FROM line_items WHERE receipt_id=?`, [receipt.id]);
+      for (const item of receipt.lineItems) {
+        await db.runAsync(
+          `INSERT INTO line_items (id, receipt_id, name, amount, category) VALUES (?, ?, ?, ?, ?)`,
+          [item.id, receipt.id, item.name, item.amount, item.category ?? null],
+        );
+      }
+    }
+  });
 }
 
 function serializeTags(tags: string[] | undefined): string | null {

@@ -26,10 +26,13 @@ export type GeminiParseResult =
 const PROMPT = `You are a receipt parser. Extract structured data from the receipt OCR text below.
 
 Rules for ITEMS:
+- CRITICAL: pair every item NAME with the price that appears on the SAME receipt row in the original receipt. Do not shift, sort, or rearrange. Read the receipt top to bottom, row by row.
+- If the OCR text returns names and prices in two separate vertical blocks (left column then right column), treat them as parallel arrays: name[i] pairs with price[i]. Keep the original order from the receipt.
+- The item amounts must SUM to the subtotal (within $0.50 of rounding/tax tolerance). If they don't, you've paired wrong — re-check the order.
 - Strip 8-14 digit UPC/SKU codes from item names.
 - Strip leading numeric item codes (e.g. "1420528 VEGGIES PK 4" → "VEGGIES PK 4").
 - Strip the trailing single-letter tax-status flag (e.g. "H", "J", "D", "E") from item names.
-- Negative amounts (e.g. "$15.00-" or "-15.00") ARE valid items — they represent discounts. Include them with a negative amount.
+- Negative amounts (e.g. "$15.00-" or "-15.00") ARE valid items — they represent discounts. Include them with a negative amount, paired with whatever name appears on that receipt row (often a TPD/markdown line that references a previous item).
 - Do NOT include these as items, they are markers / payment / header noise:
   - SUBTOTAL, TAX, TOTAL, AMOUNT, BALANCE, CHANGE, TENDER lines
   - Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE

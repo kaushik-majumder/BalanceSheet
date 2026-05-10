@@ -25,6 +25,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
+import { ItemEditModal } from '../../components/receipt/ItemEditModal';
 
 type CategoryGroup = {
   category: Category;
@@ -69,6 +70,8 @@ export default function EditReceiptScreen() {
   const [category, setCategory] = useState<Category>('Other');
   const [categoryTags, setCategoryTags] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
+  const [items, setItems] = useState<LineItem[]>([]);
+  const [editingItem, setEditingItem] = useState<LineItem | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -86,6 +89,7 @@ export default function EditReceiptScreen() {
       setCategory(r.category);
       setCategoryTags(r.categoryTags ?? [r.category]);
       setNotes(r.notes ?? '');
+      setItems(r.lineItems ?? []);
       setLoading(false);
 
       // Background refinement — run the async classifier on items still
@@ -94,7 +98,10 @@ export default function EditReceiptScreen() {
       if (r.lineItems?.length) {
         try {
           const refined = await refineUncategorizedItems(r.lineItems);
-          if (mounted) setReceipt({ ...r, lineItems: refined });
+          if (mounted) {
+            setReceipt({ ...r, lineItems: refined });
+            setItems(refined);
+          }
         } catch {
           // best-effort; ignore
         }
@@ -142,6 +149,7 @@ export default function EditReceiptScreen() {
         category: primary,
         categoryTags: categoryTags.length ? categoryTags : [primary],
         notes: notes.trim() || undefined,
+        lineItems: items,
       });
       router.back();
     } catch {
@@ -270,13 +278,15 @@ export default function EditReceiptScreen() {
         />
       </Card>
 
-      {/* Line items grouped by category, with tax + total */}
-      {receipt.lineItems && receipt.lineItems.length > 0 && (
+      {/* Line items grouped by category, with tax + total. Tap any
+          row to fix name/amount/category or delete it. */}
+      {items.length > 0 && (
         <Card style={styles.fieldCard}>
-          <Text style={styles.fieldLabel}>
-            Items ({receipt.lineItems.length})
-          </Text>
-          {groupItemsByCategory(receipt.lineItems, receipt.category).map((group) => (
+          <View style={styles.itemsCardHeader}>
+            <Text style={styles.fieldLabel}>Items ({items.length})</Text>
+            <Text style={styles.tapHint}>Tap to edit</Text>
+          </View>
+          {groupItemsByCategory(items, receipt.category).map((group) => (
             <View key={group.category} style={styles.categoryGroup}>
               <View style={styles.categoryGroupHeader}>
                 <Badge category={group.category} size="sm" />
@@ -285,12 +295,17 @@ export default function EditReceiptScreen() {
                 </Text>
               </View>
               {group.items.map((item) => (
-                <View key={item.id} style={styles.lineItemRow}>
+                <TouchableOpacity
+                  key={item.id}
+                  onPress={() => setEditingItem(item)}
+                  style={styles.lineItemRow}
+                  activeOpacity={0.7}
+                >
                   <Text style={styles.lineItemName} numberOfLines={1}>
                     {item.name}
                   </Text>
                   <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
-                </View>
+                </TouchableOpacity>
               ))}
             </View>
           ))}
@@ -376,6 +391,19 @@ export default function EditReceiptScreen() {
         variant="danger"
         size="lg"
         style={styles.deleteBtn}
+      />
+
+      <ItemEditModal
+        item={editingItem}
+        onClose={() => setEditingItem(null)}
+        onSave={(updated) => {
+          setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+          setEditingItem(null);
+        }}
+        onDelete={(id) => {
+          setItems((prev) => prev.filter((it) => it.id !== id));
+          setEditingItem(null);
+        }}
       />
     </ScrollView>
   );
@@ -570,6 +598,15 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     fontSize: theme.font.xs,
     fontWeight: '600',
+  },
+  itemsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  tapHint: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
   },
   saveBtn: {
     marginTop: theme.spacing.sm,
