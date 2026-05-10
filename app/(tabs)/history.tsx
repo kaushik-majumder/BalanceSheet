@@ -87,35 +87,38 @@ export default function HistoryScreen() {
         )}
       </View>
 
-      {/* Category filter chips */}
-      <FlatList
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        data={[FILTER_ALL, ...ALL_CATEGORIES]}
-        keyExtractor={(item) => item}
-        contentContainerStyle={styles.filterList}
-        renderItem={({ item }) => {
+      {/* Category filter chips — wrap onto multiple rows so all
+          categories are visible without horizontal scrolling. */}
+      <View style={styles.filterList}>
+        {([FILTER_ALL, ...ALL_CATEGORIES] as Filter[]).map((item) => {
           const active = activeFilter === item;
           const color =
-            item === FILTER_ALL ? theme.colors.primary : theme.colors.category[item as Category];
+            item === FILTER_ALL
+              ? theme.colors.primary
+              : theme.colors.category[item as Category];
           return (
             <TouchableOpacity
-              onPress={() => setActiveFilter(item as Filter)}
+              key={item}
+              onPress={() => setActiveFilter(item)}
               style={[
                 styles.chip,
                 active && { backgroundColor: `${color}22`, borderColor: color },
               ]}
             >
               {item !== FILTER_ALL && (
-                <Text style={styles.chipIcon}>{CATEGORY_ICONS[item as Category]}</Text>
+                <Text style={styles.chipIcon}>
+                  {CATEGORY_ICONS[item as Category]}
+                </Text>
               )}
-              <Text style={[styles.chipLabel, active && { color }]}>
+              <Text
+                style={[styles.chipLabel, active && { color, fontWeight: '700' }]}
+              >
                 {item}
               </Text>
             </TouchableOpacity>
           );
-        }}
-      />
+        })}
+      </View>
 
       {/* Summary row */}
       {filtered.length > 0 && (
@@ -171,6 +174,8 @@ const styles = StyleSheet.create({
     fontSize: theme.font.md,
   },
   filterList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     paddingHorizontal: theme.spacing.md,
     paddingBottom: theme.spacing.sm,
     gap: 8,

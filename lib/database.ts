@@ -256,29 +256,14 @@ export async function deleteReceipt(id: string): Promise<void> {
 
 export async function getAllReceipts(): Promise<Receipt[]> {
   const rows = await db.getAllAsync<RawRow>(`SELECT * FROM receipts ORDER BY date DESC`);
-  return rows.map(rowToReceipt);
+  return await attachLineItems(rows);
 }
 
 export async function getReceiptById(id: string): Promise<Receipt | null> {
   const row = await db.getFirstAsync<RawRow>(`SELECT * FROM receipts WHERE id=?`, [id]);
   if (!row) return null;
-
-  const itemRows = await db.getAllAsync<{
-    id: string;
-    name: string;
-    amount: number;
-    category: string | null;
-  }>(`SELECT id, name, amount, category FROM line_items WHERE receipt_id=?`, [id]);
-
-  return {
-    ...rowToReceipt(row),
-    lineItems: itemRows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      amount: r.amount,
-      category: (r.category ?? undefined) as Receipt['category'] | undefined,
-    })),
-  };
+  const [withItems] = await attachLineItems([row]);
+  return withItems ?? rowToReceipt(row);
 }
 
 export async function getReceiptsByMonth(year: number, month: number): Promise<Receipt[]> {
@@ -288,7 +273,7 @@ export async function getReceiptsByMonth(year: number, month: number): Promise<R
     `SELECT * FROM receipts WHERE date >= ? AND date <= ? ORDER BY date DESC`,
     [start, end],
   );
-  return rows.map(rowToReceipt);
+  return await attachLineItems(rows);
 }
 
 export async function searchReceipts(query: string): Promise<Receipt[]> {
@@ -299,7 +284,43 @@ export async function searchReceipts(query: string): Promise<Receipt[]> {
      ORDER BY date DESC`,
     [q, q, q],
   );
-  return rows.map(rowToReceipt);
+  return await attachLineItems(rows);
+}
+
+/**
+ * Batch-load line items for a list of receipt rows in a single query and
+ * attach them to the resulting Receipt objects. Used by every receipt-list
+ * query so the dashboard's per-category aggregation has the items it needs.
+ */
+async function attachLineItems(rows: RawRow[]): Promise<Receipt[]> {
+  if (rows.length === 0) return [];
+  const placeholders = rows.map(() => '?').join(',');
+  const itemRows = await db.getAllAsync<{
+    id: string;
+    receipt_id: string;
+    name: string;
+    amount: number;
+    category: string | null;
+  }>(
+    `SELECT id, receipt_id, name, amount, category
+     FROM line_items WHERE receipt_id IN (${placeholders})`,
+    rows.map((r) => r.id),
+  );
+  const byReceiptId = new Map<string, Receipt['lineItems']>();
+  for (const r of itemRows) {
+    const list = byReceiptId.get(r.receipt_id) ?? [];
+    list.push({
+      id: r.id,
+      name: r.name,
+      amount: r.amount,
+      category: (r.category ?? undefined) as Receipt['category'] | undefined,
+    });
+    byReceiptId.set(r.receipt_id, list);
+  }
+  return rows.map((row) => ({
+    ...rowToReceipt(row),
+    lineItems: byReceiptId.get(row.id) ?? [],
+  }));
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
