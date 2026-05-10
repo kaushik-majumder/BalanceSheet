@@ -12,6 +12,7 @@ import {
   getAnthropicApiKey,
 } from './secureStorage';
 import { classifyWithAnthropic } from './anthropicClassify';
+import { classifyWithGemini } from './geminiClassify';
 
 /**
  * Classify a single item by name. Layered approach:
@@ -44,7 +45,23 @@ export async function classifyItemAsync(name: string): Promise<Category> {
     return local;
   }
 
-  // Step 3: direct Anthropic call (preferred when key is set).
+  // Step 3: direct AI call. Prefer the built-in Gemini key (free for
+  // users) over a user-provided Anthropic key. Both paths cache results
+  // identically; whichever responds first wins for this item.
+  const geminiKey = (Constants.expoConfig?.extra as { geminiApiKey?: string } | undefined)
+    ?.geminiApiKey;
+  if (geminiKey) {
+    try {
+      const result = await classifyWithGemini(cleaned, geminiKey);
+      if (result.ok && isValidCategory(result.category)) {
+        await setCachedItemClassification(cleaned, result.category, 'remote');
+        return result.category;
+      }
+    } catch {
+      // fall through to Anthropic / backend / Other
+    }
+  }
+
   const aiEnabled = await getAiClassifyEnabled();
   if (aiEnabled) {
     const apiKey = await getAnthropicApiKey();

@@ -68,6 +68,12 @@ module.exports = ({ config }) => {
       googleWebClientId:
         process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ??
         '858326644205-etreldr96iispa3mr6cv6vcfv1ivukf1.apps.googleusercontent.com',
+      // Gemini API key for AI-powered classification — sourced from the
+      // EAS sensitive env var GEMINI_API_KEY at build/update time so the
+      // raw value never lives in this repo. Restricted server-side to
+      // this app's package + SHA-1 so an extracted key can't be abused
+      // outside the app.
+      geminiApiKey: process.env.GEMINI_API_KEY,
     },
   });
 };
