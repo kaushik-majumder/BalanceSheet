@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -10,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
 import { theme } from '../constants/theme';
@@ -23,6 +25,7 @@ import {
   saveProfile,
   validateProfileDraft,
 } from '../lib/profile';
+import { pickProfilePhoto } from '../lib/profilePhoto';
 
 export default function ProfileSetupScreen() {
   const { user, profile, setProfile, signOut } = useAuth();
@@ -31,12 +34,27 @@ export default function ProfileSetupScreen() {
   const [lastName, setLastName] = useState(profile?.lastName ?? '');
   const [gender, setGender] = useState<Gender | null>(profile?.gender ?? null);
   const [age, setAge] = useState(profile?.age ? String(profile.age) : '');
+  const [photoUri, setPhotoUri] = useState<string | null>(profile?.photoUri ?? null);
   const [errors, setErrors] = useState<ProfileValidationError>({});
   const [saving, setSaving] = useState(false);
+  const [pickingPhoto, setPickingPhoto] = useState(false);
+
+  const choosePhoto = async () => {
+    if (!user || pickingPhoto) return;
+    try {
+      setPickingPhoto(true);
+      const uri = await pickProfilePhoto(user.uid);
+      if (uri) setPhotoUri(uri);
+    } catch (e) {
+      Alert.alert('Could not add photo', (e as Error)?.message ?? 'Please try again.');
+    } finally {
+      setPickingPhoto(false);
+    }
+  };
 
   const submit = async () => {
     if (!user) return;
-    const draft: ProfileDraft = { firstName, lastName, gender, age };
+    const draft: ProfileDraft = { firstName, lastName, gender, age, photoUri };
     const validation = validateProfileDraft(draft);
     setErrors(validation);
     if (!isProfileValidationClean(validation)) return;
@@ -67,11 +85,39 @@ export default function ProfileSetupScreen() {
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <View style={styles.header}>
-            <Text style={styles.title}>Tell us about yourself</Text>
+            <Text style={styles.title}>
+              {profile ? 'Edit your profile' : 'Tell us about yourself'}
+            </Text>
             <Text style={styles.subtitle}>
-              Just a few details so we can personalise your experience.
+              {profile
+                ? 'Update any of your details below.'
+                : 'Just a few details so we can personalise your experience.'}
             </Text>
           </View>
+
+          <Pressable onPress={choosePhoto} style={styles.avatarWrap} hitSlop={6}>
+            {photoUri ? (
+              <Image source={{ uri: photoUri }} style={styles.avatar} />
+            ) : (
+              <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                <Ionicons
+                  name="person-outline"
+                  size={48}
+                  color={theme.colors.textMuted}
+                />
+              </View>
+            )}
+            <View style={styles.avatarEditBadge}>
+              <Ionicons name="camera" size={14} color="#fff" />
+            </View>
+          </Pressable>
+          <Text style={styles.photoHint}>
+            {pickingPhoto
+              ? 'Opening photo library…'
+              : photoUri
+                ? 'Tap to change photo'
+                : 'Tap to add a photo (optional)'}
+          </Text>
 
           <View style={styles.form}>
             <Field
@@ -186,7 +232,42 @@ const styles = StyleSheet.create({
     paddingBottom: theme.spacing.xl,
   },
   header: {
-    marginBottom: theme.spacing.xl,
+    marginBottom: theme.spacing.lg,
+  },
+  avatarWrap: {
+    alignSelf: 'center',
+    marginBottom: theme.spacing.sm,
+  },
+  avatar: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    borderWidth: 2,
+    borderColor: theme.colors.border,
+  },
+  avatarPlaceholder: {
+    backgroundColor: theme.colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: theme.colors.background,
+  },
+  photoHint: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    textAlign: 'center',
+    marginBottom: theme.spacing.lg,
   },
   title: {
     color: theme.colors.textPrimary,

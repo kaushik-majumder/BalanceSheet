@@ -39,10 +39,20 @@ export async function initDatabase(): Promise<void> {
       last_name   TEXT NOT NULL,
       gender      TEXT NOT NULL,
       age         INTEGER NOT NULL,
+      photo_uri   TEXT,
       created_at  TEXT NOT NULL,
       updated_at  TEXT NOT NULL
     );
   `);
+
+  // Migration: add photo_uri to profiles for databases created before the
+  // column existed. ALTER TABLE has no IF NOT EXISTS, so we swallow the
+  // duplicate-column error.
+  try {
+    await db.execAsync(`ALTER TABLE profiles ADD COLUMN photo_uri TEXT`);
+  } catch {
+    // column already exists
+  }
 }
 
 export async function deleteAllReceipts(): Promise<void> {
@@ -55,6 +65,7 @@ export interface ProfileRow {
   last_name: string;
   gender: string;
   age: number;
+  photo_uri: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -67,15 +78,25 @@ export async function getProfileRow(uid: string): Promise<ProfileRow | null> {
 
 export async function upsertProfileRow(row: ProfileRow): Promise<void> {
   await db.runAsync(
-    `INSERT INTO profiles (uid, first_name, last_name, gender, age, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO profiles (uid, first_name, last_name, gender, age, photo_uri, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(uid) DO UPDATE SET
        first_name = excluded.first_name,
        last_name  = excluded.last_name,
        gender     = excluded.gender,
        age        = excluded.age,
+       photo_uri  = excluded.photo_uri,
        updated_at = excluded.updated_at`,
-    [row.uid, row.first_name, row.last_name, row.gender, row.age, row.created_at, row.updated_at],
+    [
+      row.uid,
+      row.first_name,
+      row.last_name,
+      row.gender,
+      row.age,
+      row.photo_uri,
+      row.created_at,
+      row.updated_at,
+    ],
   );
 }
 

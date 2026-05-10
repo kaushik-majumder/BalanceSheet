@@ -6,6 +6,7 @@ export type ProfileDraft = {
   lastName: string;
   gender: Gender | null;
   age: string; // raw text from input; validated to a number
+  photoUri: string | null;
 };
 
 export type ProfileValidationError = {

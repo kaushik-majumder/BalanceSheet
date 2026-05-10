@@ -207,6 +207,47 @@ describe('pickTarget — gate ordering invariants', () => {
   });
 });
 
+describe('pickTarget — modal/edit screen regression', () => {
+  // Regression: when user opens /settings (a modal), an over-eager guard used
+  // to either bounce them back to /(tabs) (because target='(tabs)' !==
+  // current='settings') or silently skip enforcement entirely (which then
+  // failed to redirect on sign-out from the modal).
+  //
+  // pickTarget is pure and unaware of modals — it always returns the right
+  // *flow* target. The layout's effect is responsible for honoring modals
+  // when target='(tabs)'. These tests assert pickTarget itself stays correct.
+
+  it('on settings modal, signed in: target is (tabs) — layout will then leave user alone', () => {
+    expect(pickTarget(signedInBase)).toBe('(tabs)');
+  });
+
+  it('on settings modal, after sign-out: target flips to auth so layout redirects', () => {
+    const s: RouteState = { ...signedInBase, user: null };
+    expect(pickTarget(s)).toBe('auth');
+  });
+
+  it('on profile-setup voluntarily, profile complete: target is (tabs) so layout leaves user alone', () => {
+    // requiresProfile=true (email/phone provider) BUT profileComplete=true,
+    // so the gate releases. Layout sees current='profile-setup', target='(tabs)',
+    // and skips the redirect because profile-setup is sticky-voluntary.
+    const s: RouteState = {
+      ...signedInBase,
+      requiresProfile: true,
+      profileComplete: true,
+    };
+    expect(pickTarget(s)).toBe('(tabs)');
+  });
+
+  it('on profile-setup as required gate, profile incomplete: target is profile-setup', () => {
+    const s: RouteState = {
+      ...signedInBase,
+      requiresProfile: true,
+      profileComplete: false,
+    };
+    expect(pickTarget(s)).toBe('profile-setup');
+  });
+});
+
 describe('pickTarget — sign-out race regression', () => {
   // Regression: previously, signOut() synchronously set biometricUnlocked=false
   // BEFORE Firebase's auth listener cleared user, leaving an intermediate

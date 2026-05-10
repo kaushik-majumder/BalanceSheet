@@ -13,6 +13,7 @@ const validDraft: ProfileDraft = {
   lastName: 'Doe',
   gender: 'Female',
   age: '28',
+  photoUri: null,
 };
 
 describe('validateProfileDraft', () => {
@@ -94,12 +95,30 @@ describe('validateProfileDraft', () => {
   });
 
   it('reports multiple errors at once (no early return)', () => {
-    const draft: ProfileDraft = { firstName: '', lastName: '', gender: null, age: '' };
+    const draft: ProfileDraft = {
+      firstName: '',
+      lastName: '',
+      gender: null,
+      age: '',
+      photoUri: null,
+    };
     const errs = validateProfileDraft(draft);
     expect(errs.firstName).toBeTruthy();
     expect(errs.lastName).toBeTruthy();
     expect(errs.gender).toBeTruthy();
     expect(errs.age).toBeTruthy();
+  });
+
+  describe('photoUri', () => {
+    it('is optional — null passes', () => {
+      expect(validateProfileDraft({ ...validDraft, photoUri: null })).toEqual({});
+    });
+
+    it('is optional — a path is also fine', () => {
+      expect(
+        validateProfileDraft({ ...validDraft, photoUri: 'file:///some/path.jpg' }),
+      ).toEqual({});
+    });
   });
 });
 

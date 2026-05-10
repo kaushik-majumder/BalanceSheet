@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -86,9 +86,27 @@ export default function SettingsScreen() {
         <Section title="Profile">
           {profile ? (
             <>
-              <Row label="Name" value={`${profile.firstName} ${profile.lastName}`} />
-              <Row label="Gender" value={profile.gender} />
-              <Row label="Age" value={String(profile.age)} />
+              <View style={styles.profileHeader}>
+                {profile.photoUri ? (
+                  <Image source={{ uri: profile.photoUri }} style={styles.avatar} />
+                ) : (
+                  <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                    <Ionicons
+                      name="person-outline"
+                      size={28}
+                      color={theme.colors.textMuted}
+                    />
+                  </View>
+                )}
+                <View style={{ flex: 1, marginLeft: theme.spacing.md }}>
+                  <Text style={styles.profileName} numberOfLines={1}>
+                    {profile.firstName} {profile.lastName}
+                  </Text>
+                  <Text style={styles.profileMeta} numberOfLines={1}>
+                    {profile.gender} · {profile.age}
+                  </Text>
+                </View>
+              </View>
               <Pressable onPress={editProfile} style={styles.linkRow}>
                 <Text style={styles.linkText}>Edit profile</Text>
                 <Ionicons name="chevron-forward" size={16} color={theme.colors.primary} />
@@ -221,6 +239,36 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontSize: theme.font.md,
     fontWeight: '600',
+  },
+  profileHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  avatarPlaceholder: {
+    backgroundColor: theme.colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileName: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.lg,
+    fontWeight: '700',
+  },
+  profileMeta: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.sm,
+    marginTop: 2,
   },
   dangerZone: {
     marginTop: theme.spacing.md,

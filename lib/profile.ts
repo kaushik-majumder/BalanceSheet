@@ -32,6 +32,7 @@ export type Profile = {
   lastName: string;
   gender: Gender;
   age: number;
+  photoUri: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -43,6 +44,7 @@ export function rowToProfile(row: ProfileRow): Profile {
     lastName: row.last_name,
     gender: row.gender as Gender,
     age: row.age,
+    photoUri: row.photo_uri,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -69,6 +71,7 @@ export async function saveProfile(
     last_name: draft.lastName.trim(),
     gender: draft.gender as Gender,
     age: parseInt(draft.age.trim(), 10),
+    photo_uri: draft.photoUri,
     created_at: existing?.createdAt ?? now,
     updated_at: now,
   };
