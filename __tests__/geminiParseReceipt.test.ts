@@ -129,4 +129,73 @@ describe('parseGeminiPayload — validating Gemini JSON receipt response', () =>
     if (!result.ok) return;
     expect(result.receipt.lineItems).toEqual([]);
   });
+
+  describe('categoryTags', () => {
+    it('preserves tags Gemini returned, trimmed and deduped', () => {
+      const json = JSON.stringify({
+        store: 'X',
+        total: 10,
+        categoryTags: ['Groceries', '  Pet Food  ', 'Groceries', 'Home Decor'],
+        items: [],
+      });
+      const r = parseGeminiPayload(json);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.receipt.categoryTags).toEqual(['Groceries', 'Pet Food', 'Home Decor']);
+    });
+
+    it('rejects tags that are too long', () => {
+      const json = JSON.stringify({
+        store: 'X',
+        total: 10,
+        categoryTags: ['Groceries', 'a'.repeat(40)],
+        items: [],
+      });
+      const r = parseGeminiPayload(json);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.receipt.categoryTags).toEqual(['Groceries']);
+    });
+
+    it('caps tag count at 6 to keep UI manageable', () => {
+      const json = JSON.stringify({
+        store: 'X',
+        total: 10,
+        categoryTags: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+        items: [],
+      });
+      const r = parseGeminiPayload(json);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.receipt.categoryTags.length).toBe(6);
+    });
+
+    it('falls back to unique item categories when categoryTags is missing', () => {
+      const json = JSON.stringify({
+        store: 'X',
+        total: 10,
+        items: [
+          { name: 'Apple', amount: 1, category: 'Groceries' },
+          { name: 'Charger', amount: 9, category: 'Electronics' },
+        ],
+      });
+      const r = parseGeminiPayload(json);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.receipt.categoryTags.sort()).toEqual(['Electronics', 'Groceries']);
+    });
+
+    it('accepts both standard and custom strings', () => {
+      const json = JSON.stringify({
+        store: 'PetSmart',
+        total: 50,
+        categoryTags: ['Other', 'Pet Food', 'Pet Toys'],
+        items: [],
+      });
+      const r = parseGeminiPayload(json);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.receipt.categoryTags).toEqual(['Other', 'Pet Food', 'Pet Toys']);
+    });
+  });
 });

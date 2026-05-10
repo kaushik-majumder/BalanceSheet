@@ -198,6 +198,28 @@ describe('parseReceiptText - line items extraction', () => {
   });
 });
 
+describe('parseReceiptText - categoryTags derivation', () => {
+  it('derives unique tags from line item categories', () => {
+    const text = [
+      'Walmart',
+      'YOGA MAT 21.98',     // Healthcare
+      'TB CHC CROIS 5.98',  // Groceries
+      'SHRIMP RING 4.97',   // Groceries (duplicate of Groceries)
+      'Total 32.93',
+    ].join('\n');
+    const tags = parseReceiptText(text).categoryTags ?? [];
+    expect(tags).toContain('Healthcare');
+    expect(tags).toContain('Groceries');
+    expect(tags.length).toBe(2);  // unique
+  });
+
+  it('falls back to receipt-level category when no items have tags', () => {
+    const text = ['Walmart', 'Total 1.00'].join('\n');
+    const tags = parseReceiptText(text).categoryTags ?? [];
+    expect(tags.length).toBeGreaterThan(0);
+  });
+});
+
 describe('parseReceiptText - integration', () => {
   it('parses a realistic grocery receipt end-to-end', () => {
     const text = [

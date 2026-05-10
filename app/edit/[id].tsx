@@ -24,6 +24,7 @@ import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
+import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
 
 type CategoryGroup = {
   category: Category;
@@ -60,13 +61,13 @@ export default function EditReceiptScreen() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showRawText, setShowRawText] = useState(false);
 
   const [storeName, setStoreName] = useState('');
   const [date, setDate] = useState('');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<Category>('Other');
+  const [categoryTags, setCategoryTags] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
@@ -83,6 +84,7 @@ export default function EditReceiptScreen() {
       setDate(format(new Date(r.date), 'yyyy-MM-dd'));
       setAmount(r.totalAmount.toFixed(2));
       setCategory(r.category);
+      setCategoryTags(r.categoryTags ?? [r.category]);
       setNotes(r.notes ?? '');
       setLoading(false);
 
@@ -125,12 +127,20 @@ export default function EditReceiptScreen() {
 
     setSaving(true);
     try {
+      // Derive primary category from the tag list — first standard
+      // category found, fall back to existing primary if all tags
+      // are custom strings.
+      const primary: Category =
+        (categoryTags.find((t) =>
+          (ALL_CATEGORIES as readonly string[]).includes(t),
+        ) as Category | undefined) ?? category;
       await updateReceipt({
         ...receipt,
         storeName: storeName.trim(),
         date: parsedDate.toISOString(),
         totalAmount: amountVal,
-        category,
+        category: primary,
+        categoryTags: categoryTags.length ? categoryTags : [primary],
         notes: notes.trim() || undefined,
       });
       router.back();
@@ -239,43 +249,10 @@ export default function EditReceiptScreen() {
         />
       </Card>
 
-      {/* Category */}
+      {/* Categories — multi-select tags */}
       <Card style={styles.fieldCard}>
-        <Text style={styles.fieldLabel}>Category</Text>
-        <TouchableOpacity
-          style={styles.categorySelector}
-          onPress={() => setShowCategoryPicker((v) => !v)}
-        >
-          <Badge category={category} />
-          <Ionicons
-            name={showCategoryPicker ? 'chevron-up' : 'chevron-down'}
-            size={18}
-            color={theme.colors.textSecondary}
-          />
-        </TouchableOpacity>
-
-        {showCategoryPicker && (
-          <View style={styles.categoryGrid}>
-            {ALL_CATEGORIES.map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                onPress={() => {
-                  setCategory(cat);
-                  setShowCategoryPicker(false);
-                }}
-                style={[
-                  styles.categoryOption,
-                  cat === category && {
-                    borderColor: theme.colors.category[cat],
-                    backgroundColor: `${theme.colors.category[cat]}22`,
-                  },
-                ]}
-              >
-                <Badge category={cat} size="sm" />
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+        <Text style={styles.fieldLabel}>Categories</Text>
+        <CategoryTagsPicker tags={categoryTags} onChange={setCategoryTags} />
       </Card>
 
       {/* Notes */}

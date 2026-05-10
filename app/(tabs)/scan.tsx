@@ -30,6 +30,7 @@ import { ALL_CATEGORIES } from '../../constants/categories';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
+import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
 
 type ScanState = 'idle' | 'processing' | 'review';
 
@@ -78,8 +79,8 @@ export default function ScanScreen() {
   const [subtotal, setSubtotal] = useState('');
   const [tax, setTax] = useState('');
   const [category, setCategory] = useState<Category>('Other');
+  const [categoryTags, setCategoryTags] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showAllItems, setShowAllItems] = useState(false);
   const [editingItem, setEditingItem] = useState<LineItem | null>(null);
   const [items, setItems] = useState<LineItem[]>([]);
@@ -103,6 +104,7 @@ export default function ScanScreen() {
       setSubtotal(result.subtotalAmount != null ? result.subtotalAmount.toFixed(2) : '');
       setTax(result.taxAmount != null ? result.taxAmount.toFixed(2) : '');
       setCategory(result.category);
+      setCategoryTags(result.categoryTags ?? [result.category]);
       setItems(result.lineItems);
       setAiApplied(false);
       setAiError(null);
@@ -163,6 +165,7 @@ export default function ScanScreen() {
     setSubtotal('');
     setTax('');
     setCategory('Other');
+    setCategoryTags([]);
     setNotes('');
     setItems([]);
     setScanState('review');
@@ -209,6 +212,17 @@ export default function ScanScreen() {
       const subtotalVal = subtotal.trim() ? parseFloat(subtotal.replace(',', '.')) : undefined;
       const taxVal = tax.trim() ? parseFloat(tax.replace(',', '.')) : undefined;
 
+      // Primary category for dashboard aggregation: prefer the first
+      // standard category present in the tag list, otherwise the
+      // dominant item category, otherwise 'Other'.
+      const primaryCategory: Category =
+        (categoryTags.find((t) =>
+          (ALL_CATEGORIES as readonly string[]).includes(t),
+        ) as Category | undefined) ??
+        pickDominantCategory(items) ??
+        'Other';
+      const finalTags = categoryTags.length ? categoryTags : [primaryCategory];
+
       await saveReceipt({
         id: uuidv4(),
         storeName: storeName.trim(),
@@ -216,7 +230,8 @@ export default function ScanScreen() {
         totalAmount: amountVal,
         subtotalAmount: subtotalVal != null && !isNaN(subtotalVal) ? subtotalVal : undefined,
         taxAmount: taxVal != null && !isNaN(taxVal) ? taxVal : undefined,
-        category,
+        category: primaryCategory,
+        categoryTags: finalTags,
         rawText: parsed?.rawText,
         imageUri: imageUri ?? undefined,
         notes: notes.trim() || undefined,
@@ -253,6 +268,7 @@ export default function ScanScreen() {
     setSubtotal('');
     setTax('');
     setCategory('Other');
+    setCategoryTags([]);
     setNotes('');
     setItems([]);
     setShowAllItems(false);
@@ -304,6 +320,15 @@ export default function ScanScreen() {
       // among line items (highest summed amount). Falls back to 'Other'.
       const dominantCategory = pickDominantCategory(ai.lineItems);
       if (dominantCategory) setCategory(dominantCategory);
+      // Multi-select tags: prefer Gemini's suggested categoryTags
+      // (which can include custom names like "Pet Food"), otherwise
+      // fall back to the unique categories among the items.
+      if (ai.categoryTags && ai.categoryTags.length > 0) {
+        setCategoryTags(ai.categoryTags);
+      } else {
+        const uniq = uniqueItemCategories(ai.lineItems);
+        if (uniq.length) setCategoryTags(uniq);
+      }
       setAiApplied(true);
     } catch (e) {
       setAiError((e as Error)?.message?.slice(0, 80) ?? 'AI parse failed.');
@@ -505,60 +530,11 @@ export default function ScanScreen() {
         />
       </Card>
 
-      {/* Category */}
+      {/* Categories — multi-select chips. Includes the standard 10
+          categories plus any custom tags Gemini suggests or the user adds. */}
       <Card style={styles.fieldCard}>
-        <Text style={styles.fieldLabel}>Category</Text>
-        <TouchableOpacity
-          style={styles.categorySelector}
-          onPress={() => setShowCategoryPicker((v) => !v)}
-        >
-          <Badge category={category} />
-          <Ionicons
-            name={showCategoryPicker ? 'chevron-up' : 'chevron-down'}
-            size={18}
-            color={theme.colors.textSecondary}
-          />
-        </TouchableOpacity>
-
-        {(() => {
-          const itemCats = uniqueItemCategories(items);
-          if (itemCats.length <= 1) return null;
-          return (
-            <View style={styles.itemCategoriesRow}>
-              <Text style={styles.itemCategoriesLabel}>
-                Categories in this receipt:
-              </Text>
-              <View style={styles.itemCategoriesChips}>
-                {itemCats.map((c) => (
-                  <Badge key={c} category={c} size="sm" />
-                ))}
-              </View>
-            </View>
-          );
-        })()}
-
-        {showCategoryPicker && (
-          <View style={styles.categoryGrid}>
-            {ALL_CATEGORIES.map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                onPress={() => {
-                  setCategory(cat);
-                  setShowCategoryPicker(false);
-                }}
-                style={[
-                  styles.categoryOption,
-                  cat === category && {
-                    borderColor: theme.colors.category[cat],
-                    backgroundColor: `${theme.colors.category[cat]}22`,
-                  },
-                ]}
-              >
-                <Badge category={cat} size="sm" />
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+        <Text style={styles.fieldLabel}>Categories</Text>
+        <CategoryTagsPicker tags={categoryTags} onChange={setCategoryTags} />
       </Card>
 
       {/* Notes */}

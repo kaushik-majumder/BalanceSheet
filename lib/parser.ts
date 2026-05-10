@@ -92,6 +92,11 @@ export function parseReceiptText(rawText: string): ParsedReceipt {
     }
   }
 
+  // Derive multi-select tags from the unique categories present in the
+  // line items. Falls back to the receipt-level category when there are
+  // no items so the chip group is never empty.
+  const categoryTags = deriveTags(lineItems, category);
+
   return {
     storeName,
     date,
@@ -99,9 +104,19 @@ export function parseReceiptText(rawText: string): ParsedReceipt {
     subtotalAmount,
     taxAmount,
     category,
+    categoryTags,
     lineItems,
     rawText,
   };
+}
+
+function deriveTags(items: LineItem[], fallback: string): string[] {
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (item.category) seen.add(item.category);
+  }
+  if (seen.size === 0) seen.add(fallback);
+  return Array.from(seen);
 }
 
 /**

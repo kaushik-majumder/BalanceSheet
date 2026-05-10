@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Receipt } from '../../types';
 import { theme } from '../../constants/theme';
 import { Badge } from '../ui/Badge';
+import { TagChip } from '../ui/TagChip';
 
 interface Props {
   receipt: Receipt;
@@ -39,7 +40,24 @@ export function ReceiptCard({ receipt, onDelete }: Props) {
           <Text style={styles.date}>
             {format(new Date(receipt.date), 'MMM d, yyyy')}
           </Text>
-          <Badge category={receipt.category} size="sm" style={styles.badge} />
+          {(() => {
+            const tags = receipt.categoryTags?.length
+              ? receipt.categoryTags
+              : [receipt.category];
+            // Show up to 3 tag chips on the card; pad with "+N" if more.
+            const visible = tags.slice(0, 3);
+            const extra = tags.length - visible.length;
+            return (
+              <View style={styles.tagsRow}>
+                {visible.map((t) => (
+                  <TagChip key={t} tag={t} size="sm" />
+                ))}
+                {extra > 0 ? (
+                  <Text style={styles.extraTags}>+{extra}</Text>
+                ) : null}
+              </View>
+            );
+          })()}
         </View>
       </View>
 
@@ -103,6 +121,17 @@ const styles = StyleSheet.create({
   },
   badge: {
     marginTop: 2,
+  },
+  tagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 4,
+  },
+  extraTags: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    alignSelf: 'center',
   },
   right: {
     alignItems: 'flex-end',

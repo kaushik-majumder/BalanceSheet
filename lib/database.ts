@@ -55,6 +55,7 @@ export async function initDatabase(): Promise<void> {
     `ALTER TABLE profiles    ADD COLUMN photo_uri        TEXT`,
     `ALTER TABLE receipts    ADD COLUMN subtotal_amount  REAL`,
     `ALTER TABLE receipts    ADD COLUMN tax_amount       REAL`,
+    `ALTER TABLE receipts    ADD COLUMN category_tags    TEXT`,
     `ALTER TABLE line_items  ADD COLUMN category         TEXT`,
   ]) {
     try {
@@ -162,12 +163,13 @@ export async function deleteProfileRow(uid: string): Promise<void> {
 }
 
 export async function saveReceipt(receipt: Receipt): Promise<void> {
+  const tagsJson = serializeTags(receipt.categoryTags);
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       `INSERT INTO receipts
          (id, store_name, date, total_amount, subtotal_amount, tax_amount,
-          category, raw_text, image_uri, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          category, category_tags, raw_text, image_uri, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         receipt.id,
         receipt.storeName,
@@ -176,6 +178,7 @@ export async function saveReceipt(receipt: Receipt): Promise<void> {
         receipt.subtotalAmount ?? null,
         receipt.taxAmount ?? null,
         receipt.category,
+        tagsJson,
         receipt.rawText ?? null,
         receipt.imageUri ?? null,
         receipt.notes ?? null,
@@ -197,7 +200,7 @@ export async function updateReceipt(receipt: Receipt): Promise<void> {
   await db.runAsync(
     `UPDATE receipts
      SET store_name=?, date=?, total_amount=?, subtotal_amount=?, tax_amount=?,
-         category=?, notes=?, updated_at=?
+         category=?, category_tags=?, notes=?, updated_at=?
      WHERE id=?`,
     [
       receipt.storeName,
@@ -206,11 +209,30 @@ export async function updateReceipt(receipt: Receipt): Promise<void> {
       receipt.subtotalAmount ?? null,
       receipt.taxAmount ?? null,
       receipt.category,
+      serializeTags(receipt.categoryTags),
       receipt.notes ?? null,
       new Date().toISOString(),
       receipt.id,
     ],
   );
+}
+
+function serializeTags(tags: string[] | undefined): string | null {
+  if (!tags || tags.length === 0) return null;
+  return JSON.stringify(tags);
+}
+
+function parseTags(raw: string | null, fallbackCategory: string): string[] {
+  if (!raw) return [fallbackCategory];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((t) => typeof t === 'string')) {
+      return parsed.length ? parsed : [fallbackCategory];
+    }
+  } catch {
+    // fall through
+  }
+  return [fallbackCategory];
 }
 
 export async function deleteReceipt(id: string): Promise<void> {
@@ -275,6 +297,7 @@ interface RawRow {
   subtotal_amount: number | null;
   tax_amount: number | null;
   category: string;
+  category_tags: string | null;
   raw_text: string | null;
   image_uri: string | null;
   notes: string | null;
@@ -291,6 +314,7 @@ function rowToReceipt(row: RawRow): Receipt {
     subtotalAmount: row.subtotal_amount ?? undefined,
     taxAmount: row.tax_amount ?? undefined,
     category: row.category as Receipt['category'],
+    categoryTags: parseTags(row.category_tags, row.category),
     rawText: row.raw_text ?? undefined,
     imageUri: row.image_uri ?? undefined,
     notes: row.notes ?? undefined,

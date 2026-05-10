@@ -13,6 +13,10 @@ export type GeminiReceipt = {
   taxAmount?: number;
   totalAmount: number;
   lineItems: LineItem[];
+  /** Multi-select tags for the receipt as a whole. May include the
+   *  standard 10 category names AND custom tags Gemini suggests
+   *  (e.g. "Pet Food", "Home Decor"). 1-4 tags typical. */
+  categoryTags: string[];
 };
 
 export type GeminiParseResult =
@@ -43,8 +47,9 @@ Rules for FIELDS:
 - date: format as YYYY-MM-DD if findable, otherwise empty string.
 - subtotal / tax: use null if not present on the receipt. The subtotal is the sum BEFORE tax. The tax is the GST/HST/PST/sales-tax amount. Don't confuse them.
 - total: the grand total the customer paid.
+- categoryTags: 1 to 4 tags for the WHOLE receipt. Each tag MAY be one of the standard categories (${ALL_CATEGORIES.join(', ')}) OR a more specific custom tag like "Pet Food", "Home Decor", "Office Supplies", "Auto Parts", "Baby Care", "Sports Gear", etc. — whatever fits the receipt content best. Keep tags short (1-3 words). For a receipt that spans multiple types of items, include multiple tags.
 
-Allowed categories (use exactly): ${ALL_CATEGORIES.join(', ')}.
+Allowed categories for individual line items (use EXACTLY one of these, no custom values for items): ${ALL_CATEGORIES.join(', ')}.
 
 Receipt OCR text:
 """`;
@@ -57,6 +62,10 @@ const RESPONSE_SCHEMA = {
     subtotal: { type: 'number', nullable: true },
     tax: { type: 'number', nullable: true },
     total: { type: 'number' },
+    categoryTags: {
+      type: 'array',
+      items: { type: 'string' },
+    },
     items: {
       type: 'array',
       items: {
@@ -176,6 +185,24 @@ export function parseGeminiPayload(jsonText: string): GeminiParseResult {
     });
   }
 
+  // Tag list — accept any short non-empty strings up to 4. If the model
+  // omitted them, fall back to the unique categories among the items.
+  let tags: string[] = [];
+  if (Array.isArray(obj.categoryTags)) {
+    for (const t of obj.categoryTags) {
+      if (typeof t !== 'string') continue;
+      const trimmed = t.trim();
+      if (!trimmed || trimmed.length > 32) continue;
+      if (!tags.includes(trimmed)) tags.push(trimmed);
+      if (tags.length >= 6) break;
+    }
+  }
+  if (tags.length === 0) {
+    const seen = new Set<string>();
+    for (const it of items) if (it.category) seen.add(it.category);
+    tags = Array.from(seen);
+  }
+
   return {
     ok: true,
     receipt: {
@@ -185,6 +212,7 @@ export function parseGeminiPayload(jsonText: string): GeminiParseResult {
       taxAmount: tax ?? undefined,
       totalAmount: total ?? 0,
       lineItems: items,
+      categoryTags: tags,
     },
   };
 }
