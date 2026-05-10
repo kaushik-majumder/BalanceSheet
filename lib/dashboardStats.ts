@@ -20,13 +20,23 @@ export function computeStats(receipts: Receipt[]): MonthlyStats {
 
   for (const r of receipts) {
     if (r.lineItems && r.lineItems.length > 0) {
-      const itemSum = r.lineItems.reduce((s, i) => s + Math.abs(i.amount), 0);
-      const scale = itemSum > 0 ? r.totalAmount / itemSum : 1;
+      // Use signed (not absolute) sums so discount/markdown lines
+      // SUBTRACT from their category total rather than add to it. The
+      // pre-merge bug was: `Math.abs(-15)` made a -$15 TPD discount
+      // contribute +$15 to "Other", double-counting the EKO MIRROR
+      // it was supposed to discount.
+      //
+      // Scale by net sum so per-category totals still add up to the
+      // receipt total (tax distributed proportionally across items).
+      // Falls back to scale=1 when the net is non-positive (a fully
+      // refunded receipt or impossible state).
+      const itemNet = r.lineItems.reduce((s, i) => s + i.amount, 0);
+      const scale = itemNet > 0 ? r.totalAmount / itemNet : 1;
       const seenInThisReceipt = new Set<string>();
       for (const item of r.lineItems) {
         const cat = (item.category ?? r.category) as string;
         if (!catMap[cat]) catMap[cat] = { total: 0, count: 0 };
-        catMap[cat].total += Math.abs(item.amount) * scale;
+        catMap[cat].total += item.amount * scale;
         if (!seenInThisReceipt.has(cat)) {
           catMap[cat].count += 1;
           seenInThisReceipt.add(cat);

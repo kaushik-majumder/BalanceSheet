@@ -127,6 +127,29 @@ describe('computeStats', () => {
       expect(sum).toBeCloseTo(100, 2);
     });
 
+    it('subtracts (does not add) negative discount lines from their category', () => {
+      // Regression: dashboard previously used `Math.abs(item.amount)`,
+      // so a -$15 TPD/markdown line on an "Other" item contributed +$15
+      // to the Other bucket — double-counting against the EKO MIRROR.
+      // The drilldown showed the correct $54.99 (signed sum) but the
+      // dashboard showed an inflated number.
+      const receipts: Receipt[] = [
+        baseReceipt({
+          id: 'costco',
+          totalAmount: 54.99,
+          category: 'Other',
+          lineItems: [
+            { id: '1', name: 'EKO MIRROR', amount: 69.99, category: 'Other' },
+            { id: '2', name: 'TPD/1993379', amount: -15, category: 'Other' },
+          ],
+        }),
+      ];
+      const s = computeStats(receipts);
+      const other = s.categories.find((c) => c.category === 'Other')!;
+      // Net: 69.99 - 15 = 54.99 (no tax to scale → scale = 1).
+      expect(other.total).toBeCloseTo(54.99, 2);
+    });
+
     it('handles items with negative amounts (discounts) without distorting categories', () => {
       const receipts: Receipt[] = [
         baseReceipt({
