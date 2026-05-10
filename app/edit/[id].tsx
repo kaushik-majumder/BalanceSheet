@@ -16,7 +16,12 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
-import { getReceiptById, updateReceipt, deleteReceipt } from '../../lib/database';
+import {
+  getReceiptById,
+  updateReceipt,
+  deleteReceipt,
+  replaceLineItems,
+} from '../../lib/database';
 import { refineUncategorizedItems } from '../../lib/itemClassifier';
 import { Receipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
@@ -397,11 +402,24 @@ export default function EditReceiptScreen() {
         item={editingItem}
         onClose={() => setEditingItem(null)}
         onSave={(updated) => {
-          setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+          if (!receipt) return;
+          const next = items.map((it) => (it.id === updated.id ? updated : it));
+          setItems(next);
+          // Persist immediately so the dashboard, history, and category
+          // drilldown all reflect the new item category without forcing
+          // the user to also tap "Save Changes" on the receipt header.
+          replaceLineItems(receipt.id, next).catch(() => {
+            Alert.alert('Could not save', 'The item change was not persisted. Try again.');
+          });
           setEditingItem(null);
         }}
         onDelete={(id) => {
-          setItems((prev) => prev.filter((it) => it.id !== id));
+          if (!receipt) return;
+          const next = items.filter((it) => it.id !== id);
+          setItems(next);
+          replaceLineItems(receipt.id, next).catch(() => {
+            Alert.alert('Could not save', 'The item deletion was not persisted. Try again.');
+          });
           setEditingItem(null);
         }}
       />
