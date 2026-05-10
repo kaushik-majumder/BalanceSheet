@@ -89,6 +89,38 @@ describe('parseReceiptText - date extraction', () => {
     const result = parseReceiptText('Some Store\n1995-06-15\nTotal $5.00');
     expect(result.date.startsWith('1995')).toBe(false);
   });
+
+  it('extracts MM/DD/YYYY with trailing time (e.g. "08/31/2025 05:48:02 PM")', () => {
+    // Skechers footer format. Previously could accidentally match the
+    // address number or other digits; now we look at the whole text.
+    const result = parseReceiptText(
+      'Store: 1431 Reg: 22 Tran: 17328\nDate: 08/31/2025 05:48:02 PM Assoc: 416855\nTotal $5.00',
+    );
+    expect(result.date.startsWith('2025-08-31')).toBe(true);
+  });
+
+  it('extracts YYYY/MM/DD slash format (Costco footer)', () => {
+    const result = parseReceiptText(
+      'COSTCO\nAUTH #: 3292E 2026/05/09 19:01:09\nTotal $5.00',
+    );
+    expect(result.date.startsWith('2026/05/09'.replace(/\//g, '-'))).toBe(true);
+  });
+
+  it('picks the most recent plausible date when multiple candidates exist', () => {
+    // Receipts often have a "valid until" or address-line date in
+    // addition to the actual transaction date. The transaction date
+    // is almost always the most recent one.
+    const result = parseReceiptText(
+      'Some Store\nValid Through: 2024-12-31\nDate: 2026-05-09\nTotal $5.00',
+    );
+    expect(result.date.startsWith('2026-05-09')).toBe(true);
+  });
+
+  it('handles European DD/MM/YYYY when day > 12 disambiguates', () => {
+    // "25/03/2025" — 25 can't be a month, so we know day=25 month=3.
+    const result = parseReceiptText('Some Store\n25/03/2025\nTotal $5.00');
+    expect(result.date.startsWith('2025-03-25')).toBe(true);
+  });
 });
 
 describe('parseReceiptText - total amount extraction', () => {
@@ -918,5 +950,11 @@ describe('parseReceiptText - Skechers multi-line items with BOGO discount', () =
     expect(r.subtotalAmount).toBeCloseTo(227.48, 2);
     expect(r.taxAmount).toBeCloseTo(29.57, 2);
     expect(r.totalAmount).toBeCloseTo(257.05, 2);
+  });
+
+  it('extracts the transaction date 2025-08-31 from the footer', () => {
+    const ocrWithDate = `${ocr}\nDate: 08/31/2025 05:48:02 PM Assoc: 416855`;
+    const r = parseReceiptText(ocrWithDate);
+    expect(r.date.startsWith('2025-08-31')).toBe(true);
   });
 });

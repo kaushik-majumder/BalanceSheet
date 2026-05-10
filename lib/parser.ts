@@ -273,41 +273,88 @@ function cleanStoreName(raw: string): string {
 }
 
 function extractDate(text: string): string {
-  // Ordered by specificity — try most specific formats first
-  const matchers: Array<(t: string) => Date | null> = [
-    // YYYY-MM-DD
-    (t) => {
-      const m = t.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
-      return m ? new Date(`${m[1]}-${m[2]}-${m[3]}`) : null;
-    },
-    // MM/DD/YYYY or MM-DD-YYYY
-    (t) => {
-      const m = t.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/);
-      return m ? new Date(`${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`) : null;
-    },
-    // Month DD, YYYY  e.g. "May 8, 2026"
-    (t) => {
-      const m = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b/i);
-      return m ? new Date(`${m[1]} ${m[2]} ${m[3]}`) : null;
-    },
-    // DD Month YYYY  e.g. "8 May 2026"
-    (t) => {
-      const m = t.match(/\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})\b/i);
-      return m ? new Date(`${m[2]} ${m[1]} ${m[3]}`) : null;
-    },
-    // MM/DD/YY
-    (t) => {
-      const m = t.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2})\b/);
-      return m ? new Date(`20${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`) : null;
-    },
-  ];
+  // Ordered by specificity — try most specific formats first.
+  // Each matcher scans the WHOLE OCR text and may produce multiple
+  // hits; we keep all valid candidates and pick the most plausible
+  // one at the end (closest to today, not in the future, not absurdly
+  // old). This avoids accidentally locking onto an address number or
+  // a "Date of birth" / "Valid until" date on the receipt footer.
+  const candidates: Date[] = [];
+
+  const tryAdd = (d: Date | null) => {
+    if (!d) return;
+    if (isNaN(d.getTime())) return;
+    if (d.getFullYear() < 2000) return;
+    candidates.push(d);
+  };
+
+  // YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD (ISO and ISO-like)
+  for (const m of text.matchAll(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/g)) {
+    tryAdd(
+      new Date(`${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`),
+    );
+  }
+  // MM/DD/YYYY or MM-DD-YYYY (North American)
+  for (const m of text.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/g)) {
+    const mm = parseInt(m[1], 10);
+    const dd = parseInt(m[2], 10);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      tryAdd(
+        new Date(`${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`),
+      );
+    }
+    // Also try DD/MM/YYYY (European) — only adds a candidate when the
+    // first number can't legally be a month (>12), so we don't double-
+    // count valid North American dates.
+    if (mm > 12 && dd >= 1 && dd <= 12) {
+      tryAdd(
+        new Date(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`),
+      );
+    }
+  }
+  // Month DD, YYYY  e.g. "May 8, 2026"
+  for (const m of text.matchAll(
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b/gi,
+  )) {
+    tryAdd(new Date(`${m[1]} ${m[2]} ${m[3]}`));
+  }
+  // DD Month YYYY  e.g. "8 May 2026"
+  for (const m of text.matchAll(
+    /\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})\b/gi,
+  )) {
+    tryAdd(new Date(`${m[2]} ${m[1]} ${m[3]}`));
+  }
+  // MM/DD/YY (2-digit year). Only matched if NOT already covered by
+  // the 4-digit pattern above on the same text region — i.e. when the
+  // OCR genuinely truncated the year.
+  for (const m of text.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2})(?!\d)\b/g)) {
+    const yyyy = `20${m[3]}`;
+    const mm = parseInt(m[1], 10);
+    const dd = parseInt(m[2], 10);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      tryAdd(
+        new Date(`${yyyy}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`),
+      );
+    }
+  }
 
   const now = new Date();
-  for (const matcher of matchers) {
-    const d = matcher(text);
-    if (d && !isNaN(d.getTime()) && d.getFullYear() >= 2000 && d <= now) {
-      return d.toISOString();
-    }
+  // Allow up to 1 day in the future to absorb timezone slop.
+  const futureCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  // Filter to plausible receipt dates: not in the future, not more
+  // than ~10 years old (we don't expect users to scan receipts from
+  // 2010).
+  const minYear = now.getFullYear() - 10;
+  const plausible = candidates.filter(
+    (d) => d <= futureCutoff && d.getFullYear() >= minYear,
+  );
+  if (plausible.length > 0) {
+    // Pick the LATEST plausible date — most receipts print one
+    // transaction date, but if a footer accidentally has a "valid
+    // until" or an older imprinted date, the transaction date is
+    // almost always the most recent one.
+    plausible.sort((a, b) => b.getTime() - a.getTime());
+    return plausible[0].toISOString();
   }
 
   return now.toISOString();

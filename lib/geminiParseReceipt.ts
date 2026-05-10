@@ -92,7 +92,7 @@ Correct items:
 
 Rules for FIELDS:
 - store: the merchant name, cleaned of OCR garbage characters and casing weirdness.
-- date: format as YYYY-MM-DD if findable, otherwise empty string.
+- date: the transaction date printed on the receipt. ALWAYS look for it — most receipts have one near the top header, the bottom footer, or next to "Date:", "Trans:", "Order:". Format as YYYY-MM-DD. Recognize all of: "2025-08-31", "08/31/2025", "31/08/2025", "2025/08/31", "Aug 31, 2025", "31 Aug 2025". Only return an empty string if NO date appears anywhere on the receipt.
 - subtotal / tax: use null if not present on the receipt. The subtotal is the sum BEFORE tax. The tax is the GST/HST/PST/sales-tax amount. Don't confuse them.
 - total: the grand total the customer paid.
 - categoryTags: 1 to 4 tags for the WHOLE receipt. Each tag MAY be one of the standard categories (${ALL_CATEGORIES.join(', ')}) OR a more specific custom tag like "Pet Food", "Home Decor", "Office Supplies", "Auto Parts", "Baby Care", "Sports Gear", etc. — whatever fits the receipt content best. Keep tags short (1-3 words). For a receipt that spans multiple types of items, include multiple tags.
