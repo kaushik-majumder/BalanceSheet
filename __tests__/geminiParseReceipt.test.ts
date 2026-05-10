@@ -62,16 +62,36 @@ describe('parseGeminiPayload — validating Gemini JSON receipt response', () =>
     expect(result.receipt.lineItems[0].name).toBe('Valid');
   });
 
-  it('falls back unknown category to Other', () => {
+  it('preserves a non-standard category string (custom receipt tag like "Footwear")', () => {
+    // Non-standard categories are now allowed on line items so they
+    // can mirror the receipt-level categoryTags (e.g. "Footwear" on a
+    // Skechers receipt instead of the broader standard "Clothing").
     const json = JSON.stringify({
-      store: 'X',
-      total: 10,
-      items: [{ name: 'Mystery', amount: 10, category: 'Snacks' }],
+      store: 'Skechers',
+      total: 110,
+      categoryTags: ['Footwear'],
+      items: [{ name: 'UNO - SUITED ON AIR', amount: 110, category: 'Footwear' }],
     });
     const result = parseGeminiPayload(json);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.receipt.lineItems[0].category).toBe('Other');
+    expect(result.receipt.lineItems[0].category).toBe('Footwear');
+  });
+
+  it('falls back to Other when item category is missing or empty', () => {
+    const json = JSON.stringify({
+      store: 'X',
+      total: 10,
+      items: [
+        { name: 'No category', amount: 10 },
+        { name: 'Empty string', amount: 10, category: '' },
+        { name: 'Whitespace only', amount: 10, category: '   ' },
+      ],
+    });
+    const result = parseGeminiPayload(json);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.receipt.lineItems.every((i) => i.category === 'Other')).toBe(true);
   });
 
   it('coerces numeric strings to numbers', () => {

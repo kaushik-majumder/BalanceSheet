@@ -63,7 +63,13 @@ Rules for ITEMS:
     Masked card numbers (mostly X's, e.g. "XXXXXXXXXXXX0933")
     Postal codes, phone numbers, store address lines, tax footnotes ("H = HST G = GST")
     Signature / approval status lines, "Verified by PIN"
-- For each item, choose the BEST matching category from the allowed list. Footwear → Clothing. Accessories, apparel → Clothing. Shoe care, polish, laces → Other. Restaurant food/coffee → Dining. Fuel → Gas. Prescription drugs → Pharmacy.
+- For each item's category, FIRST decide the receipt-level categoryTags (see Rules for FIELDS below), then assign EVERY item to ONE of those categoryTags. This keeps the per-item categorization in sync with the receipt's overall classification.
+  - If categoryTags is ["Footwear", "Other"], items must be either "Footwear" or "Other" — not "Clothing".
+  - If categoryTags is just standard categories like ["Groceries", "Pharmacy"], items must be one of those.
+  - If an item doesn't fit any of the chosen categoryTags, use "Other".
+  - DO NOT pick a category for an item that isn't in categoryTags. Pick the closest tag instead.
+
+Allowed STANDARD categories (you can use these AND/OR custom tags): ${ALL_CATEGORIES.join(', ')}. Mapping cheatsheet: Footwear/apparel → use a "Footwear"/"Clothing" custom tag if specific, else "Clothing". Shoe care/polish/laces → "Other". Restaurant food/coffee → "Dining". Fuel → "Gas". Prescription drugs → "Pharmacy".
 
 EXAMPLE 1 — BOGO 50% Off (Skechers-style):
 OCR fragment:
@@ -77,18 +83,24 @@ OCR fragment:
     Size: 8 Color: NVY/WHT ($52.50)
     BOGO 50% Off Footwear
     New Price: $52.49
+Correct categoryTags: ["Footwear"]
 Correct items:
-    { "name": "UNO - SUITED ON AIR",    "amount": 110.00, "category": "Clothing" }
-    { "name": "ON-THE-GO FLEX - CO",    "amount": 52.49,  "category": "Clothing" }
-(One line per shoe. The first shoe's "$0.00" BOGO line is a placeholder; the second shoe's "($52.50)" is the discount, so its net = 104.99 − 52.50 = 52.49 which matches the printed "New Price: $52.49".)
+    { "name": "UNO - SUITED ON AIR",    "amount": 110.00, "category": "Footwear" }
+    { "name": "ON-THE-GO FLEX - CO",    "amount": 52.49,  "category": "Footwear" }
+(Items use the CUSTOM "Footwear" tag, not the broader standard "Clothing", because Footwear was picked as a receipt-level tag. One line per shoe. The first shoe's "$0.00" BOGO line is a placeholder; the second shoe's "($52.50)" is the discount, so its net = 104.99 − 52.50 = 52.49 which matches the printed "New Price: $52.49".)
 
-EXAMPLE 2 — Costco TPD markdown:
+EXAMPLE 2 — Costco multi-category trip with TPD markdown:
 OCR fragment:
+    1420528 VEGGIES PK 4 14.99 H
     1993379 EKO MIRROR 69.99 H
     2067431 TPD/1993379 15.00- H
+    313963 KS ORG EGGS 12.49
+Correct categoryTags: ["Groceries", "Home Decor"]
 Correct items:
-    { "name": "EKO MIRROR", "amount": 54.99, "category": "Other" }
-(The TPD/1993379 line is the markdown for SKU 1993379. Net = 69.99 − 15.00 = 54.99. Emit ONE line at the net price; do NOT emit the TPD line as a separate item.)
+    { "name": "VEGGIES PK 4", "amount": 14.99, "category": "Groceries" }
+    { "name": "EKO MIRROR",   "amount": 54.99, "category": "Home Decor" }
+    { "name": "KS ORG EGGS",  "amount": 12.49, "category": "Groceries" }
+(EKO MIRROR uses the custom "Home Decor" tag (the receipt has TWO categoryTags so each item picks the one it belongs to). The TPD/1993379 line is the markdown for SKU 1993379. Net = 69.99 − 15.00 = 54.99. Emit ONE line per product at the net price; do NOT emit the TPD line as a separate item.)
 
 Rules for FIELDS:
 - store: the merchant name, cleaned of OCR garbage characters and casing weirdness.
@@ -118,10 +130,13 @@ const RESPONSE_SCHEMA = {
         properties: {
           name: { type: 'string' },
           amount: { type: 'number' },
-          category: {
-            type: 'string',
-            enum: ALL_CATEGORIES as unknown as string[],
-          },
+          // Category is a free-form string, not enum-restricted. Items
+          // should ideally use one of the receipt-level categoryTags
+          // (which may include custom labels like "Footwear" or "Pet
+          // Food"), falling back to one of the standard 10 categories.
+          // The prompt enforces this convention; the schema stays open
+          // so custom tags aren't silently dropped by the JSON validator.
+          category: { type: 'string' },
         },
         required: ['name', 'amount', 'category'],
       },
@@ -286,7 +301,14 @@ export function parseGeminiPayload(jsonText: string): GeminiParseResult {
     const name = typeof i.name === 'string' ? i.name.trim() : '';
     const amount = toFiniteNumber(i.amount);
     if (!name || amount == null) continue;
-    const category = isCategory(i.category) ? (i.category as Category) : 'Other';
+    // Accept ANY non-empty string for item category — most should be
+    // one of the 10 standard categories, but specific custom tags
+    // (e.g. "Footwear", "Pet Food") are now allowed so per-item
+    // categorization stays consistent with the receipt's categoryTags.
+    // Fall back to 'Other' only when the field is missing or blank.
+    const rawCategory =
+      typeof i.category === 'string' ? i.category.trim() : '';
+    const category = rawCategory.length > 0 ? rawCategory : 'Other';
     items.push({
       id: Math.random().toString(36).slice(2, 9),
       name,
@@ -336,10 +358,6 @@ function toFiniteNumber(v: unknown): number | undefined {
   if (v == null) return undefined;
   const n = typeof v === 'number' ? v : typeof v === 'string' ? parseFloat(v) : NaN;
   return Number.isFinite(n) ? n : undefined;
-}
-
-function isCategory(v: unknown): boolean {
-  return typeof v === 'string' && (ALL_CATEGORIES as readonly string[]).includes(v);
 }
 
 function isoDateOrEmpty(date: string): string {

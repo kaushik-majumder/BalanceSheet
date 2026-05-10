@@ -131,7 +131,7 @@ Rules for ITEMS:
 - Items MUST sum to subtotal within $0.50 — re-check pairings before responding.
 - Strip 8-14 digit UPC/SKU prefixes from item names.
 - Strip trailing tax-status letters (H, J, D, E, T).
-- Each item's category MUST be one of: ${ALL_CATEGORIES.join(', ')}.
+- Each item's category MUST be one of the receipt's categoryTags. Decide categoryTags first, then assign every item to one of those tags. If an item doesn't fit any tag, use "Other". Allowed STANDARD tags: ${ALL_CATEGORIES.join(', ')} — plus any specific custom labels you choose (e.g. "Footwear", "Pet Food", "Home Decor"). Items should NEVER use a category that isn't in categoryTags.
 
 Skip metadata rows attached to items: "Style: ...", "Size: 8 Color: BLACK", "BOGO 50% Off" (even with $0.00), "New Price: $...", "TPD/{SKU}", "You Saved $...", "Items Sold: N", "Items Returned: N".
 
@@ -149,18 +149,26 @@ OCR:
     197976255623 ON-THE-GO FLEX - CO $104.99T
     Size: 8 Color: NVY/WHT ($52.50)
     New Price: $52.49
+Output categoryTags: ["Footwear"]
 Output items:
     [
-      {"name": "UNO - SUITED ON AIR", "amount": 110.00, "category": "Clothing"},
-      {"name": "ON-THE-GO FLEX - CO", "amount": 52.49, "category": "Clothing"}
+      {"name": "UNO - SUITED ON AIR", "amount": 110.00, "category": "Footwear"},
+      {"name": "ON-THE-GO FLEX - CO", "amount": 52.49, "category": "Footwear"}
     ]
+(Items use the custom "Footwear" tag, matching categoryTags. Don't pick "Clothing" here.)
 
-EXAMPLE — Costco TPD markdown:
+EXAMPLE — Costco multi-category trip:
 OCR:
+    1420528 VEGGIES PK 4 14.99 H
     1993379 EKO MIRROR 69.99 H
     2067431 TPD/1993379 15.00- H
+Output categoryTags: ["Groceries", "Home Decor"]
 Output items:
-    [{"name": "EKO MIRROR", "amount": 54.99, "category": "Other"}]
+    [
+      {"name": "VEGGIES PK 4", "amount": 14.99, "category": "Groceries"},
+      {"name": "EKO MIRROR", "amount": 54.99, "category": "Home Decor"}
+    ]
+(Each item is assigned to whichever categoryTag it belongs to.)
 `;
 
 function buildUserPrompt(rawText: string, examples: ParseRequestBody['examples']): string {
