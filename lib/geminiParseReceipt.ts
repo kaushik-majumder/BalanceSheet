@@ -97,10 +97,7 @@ Rules for FIELDS:
 - total: the grand total the customer paid.
 - categoryTags: 1 to 4 tags for the WHOLE receipt. Each tag MAY be one of the standard categories (${ALL_CATEGORIES.join(', ')}) OR a more specific custom tag like "Pet Food", "Home Decor", "Office Supplies", "Auto Parts", "Baby Care", "Sports Gear", etc. — whatever fits the receipt content best. Keep tags short (1-3 words). For a receipt that spans multiple types of items, include multiple tags.
 
-Allowed categories for individual line items (use EXACTLY one of these, no custom values for items): ${ALL_CATEGORIES.join(', ')}.
-
-Receipt OCR text:
-"""`;
+Allowed categories for individual line items (use EXACTLY one of these, no custom values for items): ${ALL_CATEGORIES.join(', ')}.`;
 
 const RESPONSE_SCHEMA = {
   type: 'object',
@@ -133,17 +130,54 @@ const RESPONSE_SCHEMA = {
   required: ['store', 'total', 'items'],
 };
 
+/** A prior user-saved correction we can inject as an in-context
+ *  example so Gemini "learns" how the user wants their receipts
+ *  parsed. Provided by lib/database#getRelevantCorrections. */
+export type CorrectionExample = {
+  rawOcr: string;
+  items: Array<{ name: string; amount: number; category?: string }>;
+};
+
+/**
+ * Render up to N prior user-corrections as additional in-context
+ * examples appended to the static prompt. Each example shows the AI
+ * the OCR text the user saw + the final items they actually saved,
+ * which encodes both the merchant-specific layout and the user's
+ * naming/categorization preferences. We cap each example's OCR at
+ * ~1.5KB and skip examples without items.
+ */
+export function formatExamples(examples: CorrectionExample[]): string {
+  const useful = examples.filter((e) => e.items.length > 0).slice(0, 3);
+  if (useful.length === 0) return '';
+  const blocks = useful.map((ex, idx) => {
+    const ocr = ex.rawOcr.slice(0, 1500).trim();
+    const items = ex.items.map((it) => ({
+      name: it.name,
+      amount: it.amount,
+      category: it.category ?? 'Other',
+    }));
+    return `EXAMPLE ${idx + 3} — from this user's prior scan of this store:\nOCR fragment:\n${ocr}\nCorrect items:\n${JSON.stringify(items, null, 2)}`;
+  });
+  return `\n\n${blocks.join('\n\n')}`;
+}
+
 /**
  * Send the OCR text to Gemini 2.5 Flash with a structured-JSON response
  * schema. Gemini extracts a clean { store, date, subtotal, tax, total,
  * items } payload that handles two-column receipts, lowercase tax
  * letters, header noise, postal codes, and other quirks the regex
  * parser struggles with.
+ *
+ * Pass `examples` (typically the user's most recent corrected scans
+ * from the same store) to add few-shot in-context learning — the
+ * model is much more likely to follow the user's preferred item
+ * naming and category assignments after seeing 1-2 worked examples.
  */
 export async function parseReceiptWithGemini(
   rawText: string,
   apiKey: string,
   signal?: AbortSignal,
+  examples: CorrectionExample[] = [],
 ): Promise<GeminiParseResult> {
   if (!apiKey || !rawText.trim()) {
     return { ok: false, kind: 'no-key', error: 'missing key or text' };
@@ -152,7 +186,11 @@ export async function parseReceiptWithGemini(
   // Cap input at ~8000 chars (~2k tokens) — even the longest receipts
   // fit, and this prevents pathological OCR from eating up tokens.
   const truncated = rawText.length > 8000 ? rawText.slice(0, 8000) : rawText;
-  const prompt = `${PROMPT}\n${truncated}\n"""`;
+  // Splice user-correction examples (if any) BEFORE the OCR block so
+  // the model has seen them as part of its reasoning context when it
+  // gets to the actual receipt.
+  const examplesBlock = formatExamples(examples);
+  const prompt = `${PROMPT}${examplesBlock}\n\nReceipt OCR text:\n"""\n${truncated}\n"""`;
 
   let resp: Response;
   try {

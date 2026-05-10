@@ -21,7 +21,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import TextRecognition from 'react-native-text-recognition';
 import { v4 as uuidv4 } from 'uuid';
-import { saveReceipt } from '../../lib/database';
+import {
+  saveReceipt,
+  saveCorrection,
+  getRelevantCorrections,
+} from '../../lib/database';
 import { parseReceiptText } from '../../lib/parser';
 import { parseReceiptWithGemini } from '../../lib/geminiParseReceipt';
 import { ParsedReceipt, Category, LineItem } from '../../types';
@@ -89,6 +93,11 @@ export default function ScanScreen() {
   const [showAllItems, setShowAllItems] = useState(false);
   const [editingItem, setEditingItem] = useState<LineItem | null>(null);
   const [items, setItems] = useState<LineItem[]>([]);
+  // Snapshot of the items returned by the parser pipeline (regex or
+  // AI). Used at save-time to detect whether the user manually
+  // corrected anything — if so we stash the OCR + final items so
+  // future scans of the same store get them as in-context examples.
+  const [parserBaseline, setParserBaseline] = useState<LineItem[]>([]);
   const [aiPending, setAiPending] = useState(false);
   const [aiApplied, setAiApplied] = useState(false);
   const [aiError, setAiError] = useState<{
@@ -114,6 +123,7 @@ export default function ScanScreen() {
       setCategory(result.category);
       setCategoryTags(result.categoryTags ?? [result.category]);
       setItems(result.lineItems);
+      setParserBaseline(result.lineItems);
       setAiApplied(false);
       setAiError(null);
       setScanState('review');
@@ -248,6 +258,32 @@ export default function ScanScreen() {
         updatedAt: now,
       });
 
+      // Feedback loop: if the user edited items vs. what the parser
+      // (regex or AI) returned, save the OCR + corrected items as an
+      // example so future scans of this store inherit their fixes.
+      // Fire-and-forget — the receipt is already saved; this is just
+      // training data.
+      const itemsChanged =
+        items.length !== parserBaseline.length ||
+        items.some((it, i) => {
+          const b = parserBaseline[i];
+          return (
+            !b ||
+            b.name !== it.name ||
+            Math.abs(b.amount - it.amount) > 0.005 ||
+            b.category !== it.category
+          );
+        });
+      if (itemsChanged && rawText && storeName.trim()) {
+        saveCorrection({
+          storeName: storeName.trim(),
+          rawOcr: rawText,
+          items,
+        }).catch(() => {
+          // non-fatal — corrections are best-effort training data
+        });
+      }
+
       Alert.alert('Saved!', 'Receipt has been saved successfully.', [
         {
           text: 'View Dashboard',
@@ -297,12 +333,30 @@ export default function ScanScreen() {
     setAiPending(true);
     setAiError(null);
     try {
-      let aiResult = await parseReceiptWithGemini(text, geminiKey);
+      // Pull up to 2 prior user-corrections for whatever store the
+      // regex parser thinks this is. Gemini sees these as few-shot
+      // examples and tends to mirror their structure, so the more a
+      // user scans the same store the more accurate it gets.
+      const guessedStore = (parsed?.storeName || storeName || '').trim();
+      const examples = guessedStore
+        ? await getRelevantCorrections(guessedStore, 2).catch(() => [])
+        : [];
+      let aiResult = await parseReceiptWithGemini(
+        text,
+        geminiKey,
+        undefined,
+        examples,
+      );
       // Auto-retry once on a transient rate limit. Gemini's free tier
       // resets RPM in ~60s; a short wait usually clears burst limits.
       if (!aiResult.ok && aiResult.kind === 'rate-limited') {
         await new Promise((r) => setTimeout(r, 3000));
-        aiResult = await parseReceiptWithGemini(text, geminiKey);
+        aiResult = await parseReceiptWithGemini(
+          text,
+          geminiKey,
+          undefined,
+          examples,
+        );
       }
       if (!aiResult.ok) {
         setAiError({ kind: aiResult.kind, message: aiResult.error });
@@ -330,6 +384,9 @@ export default function ScanScreen() {
       if (ai.taxAmount != null) setTax(ai.taxAmount.toFixed(2));
       else setTax('');
       setItems(ai.lineItems);
+      // Reset baseline to the AI's output — anything the user changes
+      // from here is a correction worth remembering.
+      setParserBaseline(ai.lineItems);
       // Update the receipt-level category to the dominant category
       // among line items (highest summed amount). Falls back to 'Other'.
       const dominantCategory = pickDominantCategory(ai.lineItems);

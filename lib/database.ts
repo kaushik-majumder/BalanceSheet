@@ -75,6 +75,107 @@ export async function initDatabase(): Promise<void> {
       created_at   TEXT NOT NULL
     );
   `);
+
+  // User-correction memory. When a user manually edits items after a
+  // scan, we save the (storeName, rawOcr, finalItems) tuple here. On
+  // the next scan from the same store the Gemini prompt loads the
+  // 1-2 most recent corrections and includes them as in-context
+  // examples — so the AI generalizes from how this specific user
+  // treats their specific stores' receipt formats.
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS receipt_corrections (
+      id           TEXT PRIMARY KEY,
+      store_name   TEXT NOT NULL,
+      raw_ocr      TEXT NOT NULL,
+      items_json   TEXT NOT NULL,
+      created_at   TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_corrections_store
+      ON receipt_corrections(store_name);
+  `);
+}
+
+export async function saveCorrection(input: {
+  storeName: string;
+  rawOcr: string;
+  items: import('../types').LineItem[];
+}): Promise<void> {
+  const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const storeKey = input.storeName.trim().toLowerCase();
+  if (!storeKey) return;
+  // Cap stored OCR at ~3KB — long enough to capture the items block,
+  // short enough that we can comfortably inject into a prompt.
+  const truncatedOcr = input.rawOcr.slice(0, 3000);
+  const itemsJson = JSON.stringify(
+    input.items.map((it) => ({
+      name: it.name,
+      amount: it.amount,
+      category: it.category,
+    })),
+  );
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `INSERT INTO receipt_corrections (id, store_name, raw_ocr, items_json, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, storeKey, truncatedOcr, itemsJson, new Date().toISOString()],
+    );
+    // Keep the table bounded — only the 10 most recent corrections per
+    // store. Older ones get pruned. A user with 100 stores ends up
+    // with at most 1000 rows total, which is tiny.
+    await db.runAsync(
+      `DELETE FROM receipt_corrections
+       WHERE store_name = ?
+         AND id NOT IN (
+           SELECT id FROM receipt_corrections
+           WHERE store_name = ?
+           ORDER BY created_at DESC
+           LIMIT 10
+         )`,
+      [storeKey, storeKey],
+    );
+  });
+}
+
+export async function getRelevantCorrections(
+  storeName: string,
+  limit = 2,
+): Promise<
+  Array<{
+    rawOcr: string;
+    items: Array<{ name: string; amount: number; category?: string }>;
+    createdAt: string;
+  }>
+> {
+  const storeKey = storeName.trim().toLowerCase();
+  if (!storeKey) return [];
+  const rows = await db.getAllAsync<{
+    raw_ocr: string;
+    items_json: string;
+    created_at: string;
+  }>(
+    `SELECT raw_ocr, items_json, created_at
+     FROM receipt_corrections
+     WHERE store_name = ?
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [storeKey, limit],
+  );
+  const out: Array<{
+    rawOcr: string;
+    items: Array<{ name: string; amount: number; category?: string }>;
+    createdAt: string;
+  }> = [];
+  for (const r of rows) {
+    try {
+      const items = JSON.parse(r.items_json);
+      if (Array.isArray(items)) {
+        out.push({ rawOcr: r.raw_ocr, items, createdAt: r.created_at });
+      }
+    } catch {
+      // skip malformed rows
+    }
+  }
+  return out;
 }
 
 export async function getCachedItemClassification(
