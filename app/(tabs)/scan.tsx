@@ -28,7 +28,7 @@ import {
   getGeminiCachedResponse,
   setGeminiCachedResponse,
 } from '../../lib/database';
-import { parseReceiptText } from '../../lib/parser';
+import { parseReceiptText, parseYmdLocal } from '../../lib/parser';
 import {
   parseReceiptWithGemini,
   parseGeminiPayload,
@@ -226,13 +226,9 @@ export default function ScanScreen() {
     setSaving(true);
     try {
       const now = new Date().toISOString();
-      let parsedDate: Date;
-      try {
-        parsedDate = new Date(date);
-        if (isNaN(parsedDate.getTime())) parsedDate = new Date();
-      } catch {
-        parsedDate = new Date();
-      }
+      // Parse the user-typed YYYY-MM-DD as LOCAL time so the saved
+      // wall-clock date matches what's on the receipt (see parseYmdLocal).
+      const parsedDate: Date = parseYmdLocal(date) ?? new Date();
 
       const subtotalVal = subtotal.trim() ? parseFloat(subtotal.replace(',', '.')) : undefined;
       const taxVal = tax.trim() ? parseFloat(tax.replace(',', '.')) : undefined;
@@ -336,7 +332,13 @@ export default function ScanScreen() {
     ai: import('../../lib/geminiParseReceipt').GeminiReceipt,
   ) => {
     setStoreName(ai.storeName);
-    if (ai.date) setDate(format(new Date(ai.date), 'yyyy-MM-dd'));
+    if (ai.date) {
+      // Gemini returns a bare "YYYY-MM-DD" string. Parse as local
+      // time so the displayed date matches the receipt's wall-clock
+      // date instead of being shifted by the user's timezone offset.
+      const d = parseYmdLocal(ai.date) ?? new Date(ai.date);
+      setDate(format(d, 'yyyy-MM-dd'));
+    }
     if (ai.totalAmount > 0) setAmount(ai.totalAmount.toFixed(2));
     if (ai.subtotalAmount != null) setSubtotal(ai.subtotalAmount.toFixed(2));
     else setSubtotal('');

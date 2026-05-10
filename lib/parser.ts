@@ -225,6 +225,33 @@ const KNOWN_CHAINS = [
   'Ross', 'Burlington', 'Dollar Tree', 'Dollarama', 'Costco Wholesale',
 ] as const;
 
+/**
+ * Build a Date for the given YYYY-MM-DD components in LOCAL time.
+ *
+ * Why this exists: `new Date("2025-08-31")` is parsed as UTC midnight,
+ * so users in a negative-offset timezone (EDT = UTC-4) who format that
+ * back as "yyyy-MM-dd" in local time get "2025-08-30" — a wall-clock
+ * date one day earlier than what was on the receipt. By constructing
+ * the Date with the (y, m, d) ctor — which uses local time — round-
+ * trips through `.toISOString()` + local-time `format(...)` preserve
+ * the wall-clock date the user actually saw on the receipt.
+ *
+ * Use this anywhere a YYYY-MM-DD string becomes a Date for storage
+ * or display.
+ */
+export function parseYmdLocal(s: string): Date | null {
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|[T\s])/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) {
+    return null;
+  }
+  const date = new Date(y, mo - 1, d);
+  return isNaN(date.getTime()) ? null : date;
+}
+
 function escapeRe(s: string): string {
   return s.replace(/[.+*?^$()[\]{}|\\]/g, '\\$&');
 }
@@ -310,60 +337,62 @@ function extractDate(text: string): string {
   // a "Date of birth" / "Valid until" date on the receipt footer.
   const candidates: Date[] = [];
 
+  // All candidate construction goes through local-time so that
+  // round-trips through `.toISOString()` + local-time `format(...)`
+  // preserve the wall-clock date that appeared on the receipt. See
+  // parseYmdLocal for the explanation.
+  const MONTHS: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  };
   const tryAdd = (d: Date | null) => {
     if (!d) return;
     if (isNaN(d.getTime())) return;
     if (d.getFullYear() < 2000) return;
     candidates.push(d);
   };
+  const addYmd = (y: number, mo: number, d: number) => {
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return;
+    tryAdd(new Date(y, mo - 1, d));
+  };
 
   // YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD (ISO and ISO-like)
   for (const m of text.matchAll(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/g)) {
-    tryAdd(
-      new Date(`${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`),
-    );
+    addYmd(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10));
   }
   // MM/DD/YYYY or MM-DD-YYYY (North American)
   for (const m of text.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/g)) {
     const mm = parseInt(m[1], 10);
     const dd = parseInt(m[2], 10);
+    const yyyy = parseInt(m[3], 10);
     if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-      tryAdd(
-        new Date(`${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`),
-      );
+      addYmd(yyyy, mm, dd);
     }
-    // Also try DD/MM/YYYY (European) — only adds a candidate when the
-    // first number can't legally be a month (>12), so we don't double-
-    // count valid North American dates.
+    // DD/MM/YYYY (European) — only when first number can't be a month.
     if (mm > 12 && dd >= 1 && dd <= 12) {
-      tryAdd(
-        new Date(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`),
-      );
+      addYmd(yyyy, dd, mm);
     }
   }
   // Month DD, YYYY  e.g. "May 8, 2026"
   for (const m of text.matchAll(
     /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b/gi,
   )) {
-    tryAdd(new Date(`${m[1]} ${m[2]} ${m[3]}`));
+    const mo = MONTHS[m[1].slice(0, 3).toLowerCase()];
+    if (mo) addYmd(parseInt(m[3], 10), mo, parseInt(m[2], 10));
   }
   // DD Month YYYY  e.g. "8 May 2026"
   for (const m of text.matchAll(
     /\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})\b/gi,
   )) {
-    tryAdd(new Date(`${m[2]} ${m[1]} ${m[3]}`));
+    const mo = MONTHS[m[2].slice(0, 3).toLowerCase()];
+    if (mo) addYmd(parseInt(m[3], 10), mo, parseInt(m[1], 10));
   }
-  // MM/DD/YY (2-digit year). Only matched if NOT already covered by
-  // the 4-digit pattern above on the same text region — i.e. when the
-  // OCR genuinely truncated the year.
+  // MM/DD/YY (2-digit year) — only when not already in 4-digit form.
   for (const m of text.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2})(?!\d)\b/g)) {
-    const yyyy = `20${m[3]}`;
     const mm = parseInt(m[1], 10);
     const dd = parseInt(m[2], 10);
     if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-      tryAdd(
-        new Date(`${yyyy}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`),
-      );
+      addYmd(2000 + parseInt(m[3], 10), mm, dd);
     }
   }
 

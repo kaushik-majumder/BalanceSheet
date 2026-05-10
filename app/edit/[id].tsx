@@ -23,6 +23,7 @@ import {
   replaceLineItems,
 } from '../../lib/database';
 import { refineUncategorizedItems } from '../../lib/itemClassifier';
+import { parseYmdLocal } from '../../lib/parser';
 import { Receipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
@@ -135,13 +136,9 @@ export default function EditReceiptScreen() {
       return;
     }
 
-    let parsedDate: Date;
-    try {
-      parsedDate = new Date(date);
-      if (isNaN(parsedDate.getTime())) parsedDate = new Date(receipt.date);
-    } catch {
-      parsedDate = new Date(receipt.date);
-    }
+    // Parse the user-typed YYYY-MM-DD as LOCAL time so the wall-clock
+    // date the user sees survives the save → reload round-trip.
+    const parsedDate: Date = parseYmdLocal(date) ?? new Date(receipt.date);
 
     setSaving(true);
     try {

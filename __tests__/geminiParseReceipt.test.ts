@@ -78,6 +78,26 @@ describe('parseGeminiPayload — validating Gemini JSON receipt response', () =>
     expect(result.receipt.lineItems[0].category).toBe('Footwear');
   });
 
+  it('preserves the wall-clock date across timezones', () => {
+    // Regression: isoDateOrEmpty used to build "YYYY-MM-DDT00:00:00.000Z"
+    // (UTC midnight), so users in negative-offset timezones saw the
+    // previous day after format(). Now the (y, m, d) ctor is used so
+    // local time is preserved and the receipt date survives.
+    const json = JSON.stringify({
+      store: 'X',
+      date: '2025-08-31',
+      total: 10,
+      items: [{ name: 'A', amount: 10, category: 'Other' }],
+    });
+    const result = parseGeminiPayload(json);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const d = new Date(result.receipt.date);
+    expect(d.getFullYear()).toBe(2025);
+    expect(d.getMonth()).toBe(7); // August
+    expect(d.getDate()).toBe(31);
+  });
+
   it('falls back to Other when item category is missing or empty', () => {
     const json = JSON.stringify({
       store: 'X',

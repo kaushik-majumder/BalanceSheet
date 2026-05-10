@@ -146,6 +146,22 @@ describe('parseReceiptText - date extraction', () => {
     const result = parseReceiptText('Some Store\n25/03/2025\nTotal $5.00');
     expect(result.date.startsWith('2025-03-25')).toBe(true);
   });
+
+  it('preserves wall-clock date when round-tripped through local-time format', () => {
+    // Regression: extractDate used to build the Date via the ISO
+    // string constructor ("YYYY-MM-DD"), which parses as UTC midnight.
+    // Users in negative-offset timezones (EDT, PDT, etc.) then saw
+    // the previous day after formatting back in local time. Now the
+    // (y, m, d) ctor is used so local time is preserved.
+    const result = parseReceiptText('Some Store\n08/31/2025\nTotal $5.00');
+    const d = new Date(result.date);
+    // getDate/getMonth/getFullYear are all LOCAL — which is exactly
+    // what the UI uses via date-fns `format`. The wall-clock date
+    // must match the receipt regardless of the test machine's TZ.
+    expect(d.getFullYear()).toBe(2025);
+    expect(d.getMonth()).toBe(7); // August (0-indexed)
+    expect(d.getDate()).toBe(31);
+  });
 });
 
 describe('parseReceiptText - total amount extraction', () => {

@@ -9,7 +9,11 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
 
 export type GeminiReceipt = {
   storeName: string;
-  date: string; // YYYY-MM-DD or empty
+  /** ISO timestamp string, e.g. "2025-08-31T04:00:00.000Z". Built
+   *  from the receipt's wall-clock date interpreted in LOCAL time so
+   *  round-trips through `format(..., "yyyy-MM-dd")` (which also uses
+   *  local time) preserve the date the user saw on the receipt. */
+  date: string;
   subtotalAmount?: number;
   taxAmount?: number;
   totalAmount: number;
@@ -362,11 +366,17 @@ function toFiniteNumber(v: unknown): number | undefined {
 
 function isoDateOrEmpty(date: string): string {
   if (!date) return new Date().toISOString();
-  // Accept YYYY-MM-DD; tolerate YYYY/MM/DD too. Anything else falls back
-  // to "now" rather than producing an invalid Date downstream.
-  const m = date.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+  // Accept YYYY-MM-DD; tolerate YYYY/MM/DD too. Construct the Date in
+  // LOCAL time so the wall-clock date the user sees on the receipt
+  // survives downstream `format(...)` calls (which use local time).
+  // Using "...T00:00:00.000Z" here would force UTC midnight and
+  // negative-offset users would see the previous day after format().
+  const m = date.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
   if (!m) return new Date().toISOString();
-  const iso = `${m[1]}-${m[2]}-${m[3]}T00:00:00.000Z`;
-  const d = new Date(iso);
+  const d = new Date(
+    parseInt(m[1], 10),
+    parseInt(m[2], 10) - 1,
+    parseInt(m[3], 10),
+  );
   return Number.isFinite(d.getTime()) ? d.toISOString() : new Date().toISOString();
 }
