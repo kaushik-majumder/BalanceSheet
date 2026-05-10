@@ -33,6 +33,8 @@ import {
   parseReceiptWithGemini,
   parseGeminiPayload,
 } from '../../lib/geminiParseReceipt';
+import { parseReceiptWithCloudflare } from '../../lib/cloudflareReceiptParse';
+import { getGeminiApiKey } from '../../lib/secureStorage';
 import { ParsedReceipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES } from '../../constants/categories';
@@ -353,18 +355,26 @@ export default function ScanScreen() {
   };
 
   const runAiParse = async (text: string) => {
-    const geminiKey = (Constants.expoConfig?.extra as { geminiApiKey?: string } | undefined)
-      ?.geminiApiKey;
-    if (!geminiKey) {
+    const extra = (Constants.expoConfig?.extra ?? {}) as {
+      geminiApiKey?: string;
+      parseEndpoint?: string;
+      parseEndpointSecret?: string;
+    };
+    const sharedGeminiKey = extra.geminiApiKey;
+    const workerEndpoint = extra.parseEndpoint;
+    const workerSecret = extra.parseEndpointSecret;
+    const userGeminiKey = await getGeminiApiKey().catch(() => null);
+
+    if (!sharedGeminiKey && !workerEndpoint && !userGeminiKey) {
       setAiError({ kind: 'no-key', message: 'AI not configured for this build.' });
       return;
     }
     setAiPending(true);
     setAiError(null);
     try {
-      // Cache hit? Avoid burning another Gemini quota request on a
-      // receipt we already parsed within the last 24 hours. Repeat
-      // scans (testing, OCR retries) used to fail with 429 here.
+      // Cache hit? Avoid burning a quota request on a receipt we
+      // already parsed within the last 24 hours. Repeat scans
+      // (testing, OCR retries) used to fail with 429 here.
       const cached = await getGeminiCachedResponse(text).catch(() => null);
       if (cached) {
         const cachedResult = parseGeminiPayload(cached);
@@ -377,32 +387,72 @@ export default function ScanScreen() {
       }
 
       // Pull up to 2 prior user-corrections for whatever store the
-      // regex parser thinks this is. Gemini sees these as few-shot
-      // examples and tends to mirror their structure, so the more a
-      // user scans the same store the more accurate it gets.
+      // regex parser thinks this is. The selected backend (Gemini or
+      // the Worker) sees these as few-shot examples and tends to
+      // mirror their structure — so the more the user scans a given
+      // store, the more accurate it gets.
       const guessedStore = (parsed?.storeName || storeName || '').trim();
       const examples = guessedStore
         ? await getRelevantCorrections(guessedStore, 2).catch(() => [])
         : [];
-      let aiResult = await parseReceiptWithGemini(
-        text,
-        geminiKey,
-        undefined,
-        examples,
-      );
-      // Auto-retry once on a transient rate limit. Gemini's free tier
-      // resets RPM in ~60s; a short wait usually clears burst limits.
-      if (!aiResult.ok && aiResult.kind === 'rate-limited') {
-        await new Promise((r) => setTimeout(r, 3000));
-        aiResult = await parseReceiptWithGemini(
-          text,
-          geminiKey,
-          undefined,
-          examples,
+
+      // Backend selection priority:
+      //   1. User's own Gemini key (BYOK) — best quality, their quota
+      //   2. App-bundled shared Gemini key — works until daily quota
+      //   3. Cloudflare Worker proxy — free Llama 3.3 fallback
+      //
+      // Each step falls through to the next on rate-limit / auth /
+      // network errors so a single quota exhaustion or one provider
+      // outage doesn't break the scan.
+      const tryBackend = async (
+        run: () => ReturnType<typeof parseReceiptWithGemini>,
+      ) => {
+        let r = await run();
+        if (!r.ok && r.kind === 'rate-limited') {
+          // Short backoff helps for transient RPM bursts.
+          await new Promise((res) => setTimeout(res, 3000));
+          r = await run();
+        }
+        return r;
+      };
+
+      let aiResult: Awaited<ReturnType<typeof parseReceiptWithGemini>> | null = null;
+      if (userGeminiKey) {
+        aiResult = await tryBackend(() =>
+          parseReceiptWithGemini(text, userGeminiKey, undefined, examples),
         );
       }
-      if (!aiResult.ok) {
-        setAiError({ kind: aiResult.kind, message: aiResult.error });
+      const isFallbackWorthy = (
+        r: Awaited<ReturnType<typeof parseReceiptWithGemini>> | null,
+      ) =>
+        !r ||
+        (!r.ok &&
+          (r.kind === 'rate-limited' ||
+            r.kind === 'auth' ||
+            r.kind === 'network' ||
+            r.kind === 'server' ||
+            r.kind === 'no-key'));
+
+      if (isFallbackWorthy(aiResult) && sharedGeminiKey) {
+        aiResult = await tryBackend(() =>
+          parseReceiptWithGemini(text, sharedGeminiKey, undefined, examples),
+        );
+      }
+
+      if (isFallbackWorthy(aiResult) && workerEndpoint) {
+        aiResult = await parseReceiptWithCloudflare({
+          rawText: text,
+          endpoint: workerEndpoint,
+          appSecret: workerSecret,
+          examples,
+        });
+      }
+
+      if (!aiResult || !aiResult.ok) {
+        setAiError({
+          kind: aiResult?.kind ?? 'unknown',
+          message: aiResult?.error ?? 'AI parse failed.',
+        });
         return;
       }
       const ai = aiResult.receipt;

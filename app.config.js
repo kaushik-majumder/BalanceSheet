@@ -74,6 +74,13 @@ module.exports = ({ config }) => {
       // this app's package + SHA-1 so an extracted key can't be abused
       // outside the app.
       geminiApiKey: process.env.GEMINI_API_KEY,
+      // Optional: a Cloudflare Worker that wraps Workers AI as a free
+      // fallback when the shared Gemini quota is exhausted. Set
+      // PARSE_ENDPOINT to e.g. https://...workers.dev/parse and
+      // PARSE_ENDPOINT_SECRET to the same secret the worker validates.
+      // See scripts/parse-receipt-worker.ts for the deploy guide.
+      parseEndpoint: process.env.PARSE_ENDPOINT,
+      parseEndpointSecret: process.env.PARSE_ENDPOINT_SECRET,
     },
   });
 };

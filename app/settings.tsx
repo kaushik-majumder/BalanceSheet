@@ -19,9 +19,12 @@ import { classifyWithAnthropic } from '../lib/anthropicClassify';
 import {
   getAiClassifyEnabled,
   getAnthropicApiKey,
+  getGeminiApiKey,
   setAiClassifyEnabled,
   setAnthropicApiKey,
+  setGeminiApiKey,
 } from '../lib/secureStorage';
+import { parseReceiptWithGemini } from '../lib/geminiParseReceipt';
 
 export default function SettingsScreen() {
   const { user, profile, provider, biometricEnabled, setBiometricEnabled, signOut, deleteAccount } =
@@ -34,16 +37,23 @@ export default function SettingsScreen() {
   const [savingKey, setSavingKey] = useState(false);
   const [testingKey, setTestingKey] = useState(false);
 
+  const [geminiKey, setGeminiKeyState] = useState('');
+  const [geminiVisible, setGeminiVisible] = useState(false);
+  const [savingGemini, setSavingGemini] = useState(false);
+  const [testingGemini, setTestingGemini] = useState(false);
+
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [stored, enabled] = await Promise.all([
+      const [stored, enabled, gemini] = await Promise.all([
         getAnthropicApiKey(),
         getAiClassifyEnabled(),
+        getGeminiApiKey(),
       ]);
       if (!mounted) return;
       setApiKeyState(stored ?? '');
       setAiEnabledState(enabled);
+      setGeminiKeyState(gemini ?? '');
     })();
     return () => {
       mounted = false;
@@ -98,6 +108,47 @@ export default function SettingsScreen() {
       }
     } finally {
       setTestingKey(false);
+    }
+  };
+
+  const saveGeminiKey = async () => {
+    setSavingGemini(true);
+    try {
+      await setGeminiApiKey(geminiKey.trim() || null);
+      Alert.alert(
+        geminiKey.trim() ? 'Gemini key saved' : 'Gemini key removed',
+        geminiKey.trim()
+          ? 'Stored encrypted on this device only. Used for full-receipt parsing instead of the shared free tier.'
+          : 'Gemini key cleared — scans will go back to the shared free tier / Cloudflare fallback.',
+      );
+    } catch (e) {
+      Alert.alert('Could not save key', (e as Error)?.message ?? 'Try again.');
+    } finally {
+      setSavingGemini(false);
+    }
+  };
+
+  const testGeminiKey = async () => {
+    if (!geminiKey.trim()) {
+      Alert.alert('Add a key first', 'Paste a Gemini API key, save it, then test.');
+      return;
+    }
+    setTestingGemini(true);
+    try {
+      const result = await parseReceiptWithGemini(
+        'TEST STORE\nMILK 3.99\nSUBTOTAL 3.99\nTAX 0.39\nTOTAL 4.38',
+        geminiKey.trim(),
+      );
+      if (result.ok) {
+        Alert.alert(
+          'Connection works',
+          `Gemini parsed a test receipt as ${result.receipt.storeName} for $${result.receipt.totalAmount.toFixed(2)}.`,
+        );
+      } else {
+        Alert.alert('Connection failed', result.error);
+      }
+    } finally {
+      setTestingGemini(false);
     }
   };
 
@@ -225,6 +276,62 @@ export default function SettingsScreen() {
               color={biometricEnabled ? theme.colors.primary : theme.colors.textMuted}
             />
           </Pressable>
+        </Section>
+
+        <Section title="Receipt parsing (Gemini)">
+          <Text style={styles.keyHelp}>
+            By default, the app uses a shared Gemini free-tier quota for
+            AI receipt parsing. If you scan a lot of receipts and hit "AI
+            quota reached", paste your own Gemini key below — it's free
+            and gives you 1500 receipts/day on your own quota.
+          </Text>
+          <View style={styles.keyBlock}>
+            <Text style={styles.keyLabel}>Your Gemini API key (optional)</Text>
+            <View style={styles.keyRow}>
+              <TextInput
+                value={geminiKey}
+                onChangeText={setGeminiKeyState}
+                placeholder="AIza..."
+                placeholderTextColor={theme.colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry={!geminiVisible}
+                style={styles.keyInput}
+              />
+              <Pressable onPress={() => setGeminiVisible((v) => !v)} hitSlop={8}>
+                <Ionicons
+                  name={geminiVisible ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={theme.colors.textSecondary}
+                  style={{ marginLeft: 8 }}
+                />
+              </Pressable>
+            </View>
+            <View style={styles.keyButtons}>
+              <Pressable
+                onPress={saveGeminiKey}
+                disabled={savingGemini}
+                style={[styles.keyButton, savingGemini && { opacity: 0.5 }]}
+              >
+                <Text style={styles.keyButtonText}>
+                  {savingGemini ? 'Saving…' : 'Save key'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={testGeminiKey}
+                disabled={testingGemini}
+                style={[styles.keyButton, styles.keyButtonGhost, testingGemini && { opacity: 0.5 }]}
+              >
+                <Text style={[styles.keyButtonText, styles.keyButtonGhostText]}>
+                  {testingGemini ? 'Testing…' : 'Test connection'}
+                </Text>
+              </Pressable>
+            </View>
+            <Text style={styles.keyHelp}>
+              Free at aistudio.google.com → Get API key. Stored encrypted
+              on this device only; never bundled into the app.
+            </Text>
+          </View>
         </Section>
 
         <Section title="AI categorization">
