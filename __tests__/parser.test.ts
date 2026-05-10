@@ -558,6 +558,28 @@ describe('parseReceiptText - two-column OCR (names and prices on separate lines)
     expect(r.subtotalAmount).toBeUndefined();
   });
 
+  it('drops Costco-specific markers (Bottom of basket, BOB count, Member, AMOUNT)', () => {
+    const ocr = [
+      'Costco',
+      'ZV Member 111965941177',
+      '1420528 VEGGIES PK 4 14.99',
+      '*****Bottom of basket*****',
+      '*****BOB Count*****',
+      '5220007 BENCH SANDAL 49.99',
+      'AMOUNT: $210.17',
+      'Items Sold: 7',
+      'XXXXXXXXXXXX0933',
+    ].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    // Should pick up only the 2 real items, not the markers/header noise.
+    expect(items.length).toBe(2);
+    for (const item of items) {
+      expect(item.name).not.toMatch(
+        /amount|member|basket|bob|items?\s+sold|x{4,}/i,
+      );
+    }
+  });
+
   it('does not over-match: "First Aid Kit" survives the AID skip', () => {
     // 'First Aid Kit' contains 'aid' but Kit isn't 8+ hex chars, so the
     // EMV-style rule shouldn't fire. The line itself isn't picked as an

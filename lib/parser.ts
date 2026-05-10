@@ -307,18 +307,28 @@ function extractSubtotalAmount(text: string): number | undefined {
 
 /**
  * Lines that are NEVER receipt items:
- *   - Totals / taxes / payment keywords
- *   - Transaction-id rows (STORE/ST/OP/TE/TR/RRN with 3+ digits)
+ *   - Totals / taxes / payment / amount keywords
+ *   - Transaction-id rows (STORE/ST/OP/TE/TR/RRN/INVOICE with 3+ digits)
  *   - EMV / bank reference lines (AID / TC / AUTH followed by 8+ hex chars)
- *   - "Signature [required]" payment-block lines
- *   - Postal codes (Canadian "L1Z 1G1" or US "12345" / "12345-6789" on own line)
- * The '#' after the prefix is optional because OCR sometimes drops it.
+ *   - Signature / approval / change-due payment-block lines
+ *   - Costco-style markers (Bottom of basket, BOB count, member ID,
+ *     "Items Sold: N", "Total Number of Items Sold")
+ *   - Masked card numbers (mostly X's followed by last-4 digits)
+ *   - Postal codes (Canadian "L1Z 1G1" or US "12345" / "12345-6789")
+ * The '#' after a prefix is optional because OCR sometimes drops it.
  */
 const SKIP_LINE_RE = new RegExp(
   [
-    '\\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal|signature|authorization)\\b',
-    '\\b(?:store|st|op|te|tr|rrn)\\s*#?\\s*\\d{3,}',
-    '\\b(?:aid|tc|auth)\\s*#?\\s*[a-f0-9]{8,}\\b',
+    '\\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|amount|approval|approved|terminal|signature|authorization|invoice)\\b',
+    '\\b(?:store|st|op|te|tr|rrn|trm|whse)\\s*#?\\s*\\d{3,}',
+    '\\b(?:aid|tc|auth|reference)\\s*#?\\s*[a-fA-F0-9]{6,}\\b',
+    '\\b(member|membership)\\b',
+    '\\bbottom\\s+of\\s+basket\\b',
+    '\\bbob\\s+count\\b',
+    '\\bitems?\\s+sold\\b',
+    '^\\s*\\*+\\s*$',                  // separator lines like "*****"
+    '^\\s*-+\\s*$',                    // separator lines like "------"
+    '^\\s*x{4,}[\\s\\d]*\\d{2,}\\s*$', // masked card "XXXXXXXXXXXX0933"
     '^\\s*[A-Z]\\d[A-Z]\\s+\\d[A-Z]\\d\\s*$',
     '^\\s*\\d{5}(?:-\\d{4})?\\s*$',
   ].join('|'),

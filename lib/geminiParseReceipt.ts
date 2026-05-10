@@ -21,15 +21,28 @@ export type GeminiParseResult =
 
 const PROMPT = `You are a receipt parser. Extract structured data from the receipt OCR text below.
 
-Rules:
+Rules for ITEMS:
 - Strip 8-14 digit UPC/SKU codes from item names.
-- Strip the trailing single-letter tax-status flag (e.g. "J", "D", "E") from item names if present.
-- Do NOT include the SUBTOTAL, TAX, or TOTAL amounts in the items array.
-- Do NOT include transaction IDs (ST/OP/TE/TR), bank reference codes (RRN/AID/TC/AUTH), postal codes, phone numbers, or store header text as items.
+- Strip leading numeric item codes (e.g. "1420528 VEGGIES PK 4" → "VEGGIES PK 4").
+- Strip the trailing single-letter tax-status flag (e.g. "H", "J", "D", "E") from item names.
+- Negative amounts (e.g. "$15.00-" or "-15.00") ARE valid items — they represent discounts. Include them with a negative amount.
+- Do NOT include these as items, they are markers / payment / header noise:
+  - SUBTOTAL, TAX, TOTAL, AMOUNT, BALANCE, CHANGE, TENDER lines
+  - Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE
+  - Bank/EMV codes: RRN, AID, TC, AUTH, REFERENCE, APPROVAL
+  - Costco markers: "Bottom of basket", "BOB Count", "Items Sold: N"
+  - Loyalty info: "ZV Member", "Member #", "Membership"
+  - Masked card numbers (lines with mostly X's, e.g. "XXXXXXXXXXXX0933")
+  - Postal codes / phone numbers / store address lines
+  - Tax footnotes like "H = HST G = GST"
+  - Signature / approval status lines
 - For each item, choose the BEST matching category from the allowed list.
+
+Rules for FIELDS:
+- store: the merchant name, cleaned of OCR garbage characters and casing weirdness.
 - date: format as YYYY-MM-DD if findable, otherwise empty string.
-- subtotal / tax: use null if not present on the receipt.
-- store: the merchant name, cleaned of OCR garbage characters.
+- subtotal / tax: use null if not present on the receipt. The subtotal is the sum BEFORE tax. The tax is the GST/HST/PST/sales-tax amount. Don't confuse them.
+- total: the grand total the customer paid.
 
 Allowed categories (use exactly): ${ALL_CATEGORIES.join(', ')}.
 

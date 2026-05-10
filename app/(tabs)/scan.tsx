@@ -33,6 +33,37 @@ import { Card } from '../../components/ui/Card';
 
 type ScanState = 'idle' | 'processing' | 'review';
 
+/**
+ * Pick the receipt-level category that best represents this set of
+ * line items: the category whose total spend across the items is
+ * largest. Returns null on an empty list.
+ */
+function pickDominantCategory(items: LineItem[]): Category | null {
+  if (!items.length) return null;
+  const spend: Partial<Record<Category, number>> = {};
+  for (const item of items) {
+    const c = item.category ?? 'Other';
+    spend[c] = (spend[c] ?? 0) + Math.abs(item.amount);
+  }
+  let best: Category = 'Other';
+  let bestSpend = -1;
+  for (const [cat, amt] of Object.entries(spend) as [Category, number][]) {
+    if (amt > bestSpend) {
+      best = cat;
+      bestSpend = amt;
+    }
+  }
+  return best;
+}
+
+function uniqueItemCategories(items: LineItem[]): Category[] {
+  const set = new Set<Category>();
+  for (const item of items) {
+    if (item.category) set.add(item.category);
+  }
+  return Array.from(set);
+}
+
 export default function ScanScreen() {
   const router = useRouter();
   const [scanState, setScanState] = useState<ScanState>('idle');
@@ -54,6 +85,8 @@ export default function ScanScreen() {
   const [items, setItems] = useState<LineItem[]>([]);
   const [aiPending, setAiPending] = useState(false);
   const [aiApplied, setAiApplied] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [rawText, setRawText] = useState('');
 
   const runOCR = async (uri: string) => {
     setScanState('processing');
@@ -63,6 +96,7 @@ export default function ScanScreen() {
       const result = parseReceiptText(rawText);
 
       setParsed(result);
+      setRawText(rawText);
       setStoreName(result.storeName);
       setDate(format(new Date(result.date), 'yyyy-MM-dd'));
       setAmount(result.totalAmount > 0 ? result.totalAmount.toFixed(2) : '');
@@ -71,37 +105,14 @@ export default function ScanScreen() {
       setCategory(result.category);
       setItems(result.lineItems);
       setAiApplied(false);
+      setAiError(null);
       setScanState('review');
 
       // Fire AI parse in parallel. The user sees the regex result
       // immediately; when Gemini returns we replace the state in-place
-      // if the AI parse looks better (more items, or has totals the
-      // regex missed).
-      const geminiKey = (Constants.expoConfig?.extra as { geminiApiKey?: string } | undefined)
-        ?.geminiApiKey;
-      if (geminiKey) {
-        setAiPending(true);
-        parseReceiptWithGemini(rawText, geminiKey)
-          .then((aiResult) => {
-            if (!aiResult.ok) return;
-            const ai = aiResult.receipt;
-            // Trust AI when it found at least as many items, OR found
-            // totals (subtotal/tax) that the regex missed.
-            const aiBetter =
-              ai.lineItems.length >= result.lineItems.length ||
-              (ai.subtotalAmount != null && result.subtotalAmount == null) ||
-              (ai.taxAmount != null && result.taxAmount == null);
-            if (!aiBetter) return;
-            setStoreName(ai.storeName);
-            if (ai.date) setDate(format(new Date(ai.date), 'yyyy-MM-dd'));
-            if (ai.totalAmount > 0) setAmount(ai.totalAmount.toFixed(2));
-            if (ai.subtotalAmount != null) setSubtotal(ai.subtotalAmount.toFixed(2));
-            if (ai.taxAmount != null) setTax(ai.taxAmount.toFixed(2));
-            setItems(ai.lineItems);
-            setAiApplied(true);
-          })
-          .finally(() => setAiPending(false));
-      }
+      // because Gemini is dramatically more accurate than the regex
+      // for messy phone-camera OCR.
+      runAiParse(rawText);
     } catch (err) {
       Alert.alert(
         'OCR Failed',
@@ -248,6 +259,57 @@ export default function ScanScreen() {
     setEditingItem(null);
     setAiPending(false);
     setAiApplied(false);
+    setAiError(null);
+    setRawText('');
+  };
+
+  const runAiParse = async (text: string) => {
+    const geminiKey = (Constants.expoConfig?.extra as { geminiApiKey?: string } | undefined)
+      ?.geminiApiKey;
+    if (!geminiKey) {
+      setAiError('No Gemini key configured.');
+      return;
+    }
+    setAiPending(true);
+    setAiError(null);
+    try {
+      const aiResult = await parseReceiptWithGemini(text, geminiKey);
+      if (!aiResult.ok) {
+        setAiError(aiResult.error.slice(0, 80));
+        return;
+      }
+      const ai = aiResult.receipt;
+      // Replace state if AI returned anything substantive. AI is almost
+      // always more accurate than the regex for noisy receipts; the only
+      // case to skip replacement is when AI returned a totally empty
+      // result.
+      const aiUseful =
+        ai.lineItems.length > 0 ||
+        ai.subtotalAmount != null ||
+        ai.taxAmount != null ||
+        ai.totalAmount > 0;
+      if (!aiUseful) {
+        setAiError('AI returned no usable data.');
+        return;
+      }
+      setStoreName(ai.storeName);
+      if (ai.date) setDate(format(new Date(ai.date), 'yyyy-MM-dd'));
+      if (ai.totalAmount > 0) setAmount(ai.totalAmount.toFixed(2));
+      if (ai.subtotalAmount != null) setSubtotal(ai.subtotalAmount.toFixed(2));
+      else setSubtotal('');
+      if (ai.taxAmount != null) setTax(ai.taxAmount.toFixed(2));
+      else setTax('');
+      setItems(ai.lineItems);
+      // Update the receipt-level category to the dominant category
+      // among line items (highest summed amount). Falls back to 'Other'.
+      const dominantCategory = pickDominantCategory(ai.lineItems);
+      if (dominantCategory) setCategory(dominantCategory);
+      setAiApplied(true);
+    } catch (e) {
+      setAiError((e as Error)?.message?.slice(0, 80) ?? 'AI parse failed.');
+    } finally {
+      setAiPending(false);
+    }
   };
 
   const saveEditedItem = (updated: LineItem) => {
@@ -356,6 +418,26 @@ export default function ScanScreen() {
             <Text style={styles.aiChipText}>AI improved this receipt</Text>
           </View>
         )}
+        {!aiPending && aiError != null && (
+          <TouchableOpacity
+            onPress={() => runAiParse(rawText)}
+            style={styles.aiChipError}
+          >
+            <Ionicons name="alert-circle-outline" size={14} color={theme.colors.error} />
+            <Text style={styles.aiChipErrorText} numberOfLines={1}>
+              AI parse failed — tap to retry
+            </Text>
+          </TouchableOpacity>
+        )}
+        {!aiPending && !aiApplied && aiError == null && rawText && (
+          <TouchableOpacity
+            onPress={() => runAiParse(rawText)}
+            style={styles.aiRetryBtn}
+          >
+            <Ionicons name="sparkles-outline" size={14} color={theme.colors.primary} />
+            <Text style={styles.aiChipText}>Re-parse with AI</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Store name */}
@@ -437,6 +519,23 @@ export default function ScanScreen() {
             color={theme.colors.textSecondary}
           />
         </TouchableOpacity>
+
+        {(() => {
+          const itemCats = uniqueItemCategories(items);
+          if (itemCats.length <= 1) return null;
+          return (
+            <View style={styles.itemCategoriesRow}>
+              <Text style={styles.itemCategoriesLabel}>
+                Categories in this receipt:
+              </Text>
+              <View style={styles.itemCategoriesChips}>
+                {itemCats.map((c) => (
+                  <Badge key={c} category={c} size="sm" />
+                ))}
+              </View>
+            </View>
+          );
+        })()}
 
         {showCategoryPicker && (
           <View style={styles.categoryGrid}>
@@ -851,6 +950,55 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontSize: theme.font.xs,
     fontWeight: '700',
+  },
+  aiChipError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radius.full,
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.4)',
+    marginTop: 8,
+    maxWidth: '100%',
+  },
+  aiChipErrorText: {
+    color: theme.colors.error,
+    fontSize: theme.font.xs,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  aiRetryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginTop: 8,
+  },
+  itemCategoriesRow: {
+    marginTop: theme.spacing.sm,
+    paddingTop: theme.spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+  },
+  itemCategoriesLabel: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    marginBottom: 6,
+  },
+  itemCategoriesChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
   },
   fieldCard: {
     gap: theme.spacing.sm,
