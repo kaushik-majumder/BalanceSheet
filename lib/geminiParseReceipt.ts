@@ -20,9 +20,21 @@ export type GeminiReceipt = {
   categoryTags: string[];
 };
 
+/** A reason code we surface to the UI so it can pick the right copy
+ *  and decide whether to auto-retry. */
+export type GeminiErrorKind =
+  | 'no-key'
+  | 'network'
+  | 'rate-limited'
+  | 'auth'
+  | 'server'
+  | 'parse'
+  | 'empty'
+  | 'unknown';
+
 export type GeminiParseResult =
   | { ok: true; receipt: GeminiReceipt }
-  | { ok: false; error: string };
+  | { ok: false; kind: GeminiErrorKind; error: string };
 
 const PROMPT = `You are a receipt parser. Extract structured data from the receipt OCR text below.
 
@@ -102,7 +114,7 @@ export async function parseReceiptWithGemini(
   signal?: AbortSignal,
 ): Promise<GeminiParseResult> {
   if (!apiKey || !rawText.trim()) {
-    return { ok: false, error: 'missing key or text' };
+    return { ok: false, kind: 'no-key', error: 'missing key or text' };
   }
 
   // Cap input at ~8000 chars (~2k tokens) — even the longest receipts
@@ -127,12 +139,28 @@ export async function parseReceiptWithGemini(
       signal,
     });
   } catch (e) {
-    return { ok: false, error: `network: ${(e as Error)?.message ?? 'unknown'}` };
+    return {
+      ok: false,
+      kind: 'network',
+      error: `network: ${(e as Error)?.message ?? 'unknown'}`,
+    };
   }
 
   if (!resp.ok) {
     const body = await resp.text().catch(() => '');
-    return { ok: false, error: `http ${resp.status}: ${body.slice(0, 300)}` };
+    const kind: GeminiErrorKind =
+      resp.status === 429
+        ? 'rate-limited'
+        : resp.status === 401 || resp.status === 403
+          ? 'auth'
+          : resp.status >= 500
+            ? 'server'
+            : 'unknown';
+    return {
+      ok: false,
+      kind,
+      error: `http ${resp.status}: ${body.slice(0, 300)}`,
+    };
   }
 
   let envelope: {
@@ -141,11 +169,15 @@ export async function parseReceiptWithGemini(
   try {
     envelope = await resp.json();
   } catch (e) {
-    return { ok: false, error: `parse envelope: ${(e as Error)?.message}` };
+    return {
+      ok: false,
+      kind: 'parse',
+      error: `parse envelope: ${(e as Error)?.message}`,
+    };
   }
 
   const text = envelope.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) return { ok: false, error: 'empty response' };
+  if (!text) return { ok: false, kind: 'empty', error: 'empty response' };
   return parseGeminiPayload(text);
 }
 
@@ -159,11 +191,15 @@ export function parseGeminiPayload(jsonText: string): GeminiParseResult {
   try {
     raw = JSON.parse(jsonText);
   } catch (e) {
-    return { ok: false, error: `parse json: ${(e as Error)?.message}` };
+    return {
+      ok: false,
+      kind: 'parse',
+      error: `parse json: ${(e as Error)?.message}`,
+    };
   }
   const obj = raw as Record<string, unknown> | null;
   if (!obj || typeof obj !== 'object') {
-    return { ok: false, error: 'reply was not an object' };
+    return { ok: false, kind: 'parse', error: 'reply was not an object' };
   }
 
   const store = typeof obj.store === 'string' ? obj.store.trim() : '';

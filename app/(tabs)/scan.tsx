@@ -91,7 +91,10 @@ export default function ScanScreen() {
   const [items, setItems] = useState<LineItem[]>([]);
   const [aiPending, setAiPending] = useState(false);
   const [aiApplied, setAiApplied] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<{
+    kind: import('../../lib/geminiParseReceipt').GeminiErrorKind;
+    message: string;
+  } | null>(null);
   const [rawText, setRawText] = useState('');
 
   const runOCR = async (uri: string) => {
@@ -288,15 +291,21 @@ export default function ScanScreen() {
     const geminiKey = (Constants.expoConfig?.extra as { geminiApiKey?: string } | undefined)
       ?.geminiApiKey;
     if (!geminiKey) {
-      setAiError('No Gemini key configured.');
+      setAiError({ kind: 'no-key', message: 'AI not configured for this build.' });
       return;
     }
     setAiPending(true);
     setAiError(null);
     try {
-      const aiResult = await parseReceiptWithGemini(text, geminiKey);
+      let aiResult = await parseReceiptWithGemini(text, geminiKey);
+      // Auto-retry once on a transient rate limit. Gemini's free tier
+      // resets RPM in ~60s; a short wait usually clears burst limits.
+      if (!aiResult.ok && aiResult.kind === 'rate-limited') {
+        await new Promise((r) => setTimeout(r, 3000));
+        aiResult = await parseReceiptWithGemini(text, geminiKey);
+      }
       if (!aiResult.ok) {
-        setAiError(aiResult.error.slice(0, 80));
+        setAiError({ kind: aiResult.kind, message: aiResult.error });
         return;
       }
       const ai = aiResult.receipt;
@@ -310,7 +319,7 @@ export default function ScanScreen() {
         ai.taxAmount != null ||
         ai.totalAmount > 0;
       if (!aiUseful) {
-        setAiError('AI returned no usable data.');
+        setAiError({ kind: 'empty', message: 'AI returned no usable data.' });
         return;
       }
       setStoreName(ai.storeName);
@@ -336,9 +345,39 @@ export default function ScanScreen() {
       }
       setAiApplied(true);
     } catch (e) {
-      setAiError((e as Error)?.message?.slice(0, 80) ?? 'AI parse failed.');
+      setAiError({
+        kind: 'unknown',
+        message: (e as Error)?.message ?? 'AI parse failed.',
+      });
     } finally {
       setAiPending(false);
+    }
+  };
+
+  // Map an AI failure into a one-line human-readable message + tone.
+  // Used by the small chip below the OCR preview. Keep these short
+  // and reassuring — the regex parser has already filled the fields.
+  const aiErrorMessage = (
+    err: { kind: import('../../lib/geminiParseReceipt').GeminiErrorKind } | null,
+  ): string => {
+    if (!err) return '';
+    switch (err.kind) {
+      case 'rate-limited':
+        return 'AI is busy right now — using basic parser. Tap to retry.';
+      case 'network':
+        return 'No internet for AI — using basic parser. Tap to retry.';
+      case 'auth':
+        return 'AI key rejected — please check Settings.';
+      case 'server':
+        return 'AI service is down — using basic parser. Tap to retry.';
+      case 'no-key':
+        return 'AI not configured.';
+      case 'empty':
+        return 'AI returned nothing — using basic parser. Tap to retry.';
+      case 'parse':
+      case 'unknown':
+      default:
+        return "AI couldn't read this — using basic parser. Tap to retry.";
     }
   };
 
@@ -453,9 +492,13 @@ export default function ScanScreen() {
             onPress={() => runAiParse(rawText)}
             style={styles.aiChipError}
           >
-            <Ionicons name="alert-circle-outline" size={14} color={theme.colors.error} />
+            <Ionicons
+              name="information-circle-outline"
+              size={14}
+              color={theme.colors.warning}
+            />
             <Text style={styles.aiChipErrorText} numberOfLines={2}>
-              AI parse failed: {aiError}. Tap to retry.
+              {aiErrorMessage(aiError)}
             </Text>
           </TouchableOpacity>
         )}
@@ -800,16 +843,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: theme.radius.full,
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    backgroundColor: 'rgba(245, 158, 11, 0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.4)',
+    borderColor: 'rgba(245, 158, 11, 0.4)',
     marginTop: 8,
     maxWidth: '100%',
   },
   aiChipErrorText: {
-    color: theme.colors.error,
+    color: theme.colors.warning,
     fontSize: theme.font.xs,
-    fontWeight: '700',
+    fontWeight: '600',
     flexShrink: 1,
   },
   aiRetryBtn: {
