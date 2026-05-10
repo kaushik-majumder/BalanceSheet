@@ -136,6 +136,24 @@ describe('buildCategoryDrilldown', () => {
     expect(result.groups[0].subtotal).toBe(5);
   });
 
+  it('drills into a custom (non-standard) category like "Gym"', () => {
+    const r = baseReceipt({
+      id: 'costco',
+      storeName: 'Costco',
+      totalAmount: 100,
+      category: 'Groceries',
+      categoryTags: ['Groceries', 'Gym'],
+      lineItems: [
+        { id: '1', name: 'Milk', amount: 50, category: 'Groceries' },
+        { id: '2', name: 'Neoprene weight', amount: 50, category: 'Gym' },
+      ],
+    });
+    const result = buildCategoryDrilldown([r], 'Gym');
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].items.map((i) => i.name)).toEqual(['Neoprene weight']);
+    expect(result.totalSpent).toBe(50);
+  });
+
   it('handles items with negative (discount) amounts', () => {
     const r = baseReceipt({
       id: 'r',

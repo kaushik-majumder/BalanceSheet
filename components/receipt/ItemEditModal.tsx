@@ -14,9 +14,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Category, LineItem } from '../../types';
 import { ALL_CATEGORIES } from '../../constants/categories';
 import { theme } from '../../constants/theme';
-import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
+import { TagChip } from '../ui/TagChip';
 
 /**
  * Modal for editing a single detected line item — name, amount,
@@ -29,15 +29,19 @@ export function ItemEditModal({
   onClose,
   onSave,
   onDelete,
+  extraTags = [],
 }: {
   item: LineItem | null;
   onClose: () => void;
   onSave: (updated: LineItem) => void;
   onDelete: (id: string) => void;
+  /** Custom tags from the parent receipt that should appear in the
+   *  category picker alongside the 10 standard categories. */
+  extraTags?: string[];
 }) {
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState<Category>('Other');
+  const [category, setCategory] = useState<Category | string>('Other');
   const [showCatPicker, setShowCatPicker] = useState(false);
 
   useEffect(() => {
@@ -48,6 +52,21 @@ export function ItemEditModal({
       setShowCatPicker(false);
     }
   }, [item]);
+
+  const standardSet = new Set<string>(ALL_CATEGORIES);
+  const customOptions = extraTags.filter((t) => !standardSet.has(t));
+  // If the current category is a custom one not in extraTags (legacy
+  // data, or the user cleared the receipt tag), keep it visible too.
+  if (
+    !standardSet.has(category) &&
+    !customOptions.includes(category)
+  ) {
+    customOptions.push(category);
+  }
+  const pickerOptions: (Category | string)[] = [
+    ...ALL_CATEGORIES,
+    ...customOptions,
+  ];
 
   const submit = () => {
     if (!item) return;
@@ -115,7 +134,7 @@ export function ItemEditModal({
               onPress={() => setShowCatPicker((v) => !v)}
               style={styles.categorySelector}
             >
-              <Badge category={category} />
+              <TagChip tag={category} />
               <Ionicons
                 name={showCatPicker ? 'chevron-up' : 'chevron-down'}
                 size={18}
@@ -124,23 +143,17 @@ export function ItemEditModal({
             </TouchableOpacity>
             {showCatPicker && (
               <View style={styles.categoryGrid}>
-                {ALL_CATEGORIES.map((c) => (
-                  <TouchableOpacity
+                {pickerOptions.map((c) => (
+                  <TagChip
                     key={c}
-                    onPress={() => {
+                    tag={c}
+                    selected={c === category}
+                    size="sm"
+                    onToggle={() => {
                       setCategory(c);
                       setShowCatPicker(false);
                     }}
-                    style={[
-                      styles.categoryOption,
-                      c === category && {
-                        borderColor: theme.colors.category[c],
-                        backgroundColor: `${theme.colors.category[c]}22`,
-                      },
-                    ]}
-                  >
-                    <Badge category={c} size="sm" />
-                  </TouchableOpacity>
+                  />
                 ))}
               </View>
             )}
@@ -213,11 +226,5 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     marginTop: theme.spacing.xs,
-  },
-  categoryOption: {
-    borderRadius: theme.radius.full,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    padding: 2,
   },
 });

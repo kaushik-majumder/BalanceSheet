@@ -104,6 +104,29 @@ describe('computeStats', () => {
       expect(s.categories[0].count).toBe(1);
     });
 
+    it('aggregates custom (non-standard) item categories as their own bucket', () => {
+      // User added a custom "Gym" tag to a Costco receipt and assigned
+      // one item to it. The dashboard breakdown should surface "Gym"
+      // as a distinct category, not collapse it into Other or Groceries.
+      const receipts: Receipt[] = [
+        baseReceipt({
+          id: 'costco',
+          totalAmount: 100,
+          category: 'Groceries',
+          lineItems: [
+            { id: '1', name: 'Milk', amount: 50, category: 'Groceries' },
+            { id: '2', name: 'Neoprene weight', amount: 50, category: 'Gym' },
+          ],
+        }),
+      ];
+      const s = computeStats(receipts);
+      const cats = Object.fromEntries(s.categories.map((c) => [c.category, c.total]));
+      expect(cats.Groceries).toBe(50);
+      expect(cats.Gym).toBe(50);
+      const sum = s.categories.reduce((a, c) => a + c.total, 0);
+      expect(sum).toBeCloseTo(100, 2);
+    });
+
     it('handles items with negative amounts (discounts) without distorting categories', () => {
       const receipts: Receipt[] = [
         baseReceipt({

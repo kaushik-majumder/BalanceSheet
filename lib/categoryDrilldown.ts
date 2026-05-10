@@ -15,7 +15,7 @@ export type CategoryDrilldownGroup = {
 };
 
 export type CategoryDrilldownResult = {
-  category: Category;
+  category: Category | string;
   /** Sum of every group's subtotal — what the user sees at the top. */
   totalSpent: number;
   groups: CategoryDrilldownGroup[];
@@ -37,7 +37,7 @@ export type CategoryDrilldownResult = {
  */
 export function buildCategoryDrilldown(
   receipts: Receipt[],
-  category: Category,
+  category: Category | string,
 ): CategoryDrilldownResult {
   const groups: CategoryDrilldownGroup[] = [];
 

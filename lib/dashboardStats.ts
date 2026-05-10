@@ -1,4 +1,4 @@
-import { Category, CategorySummary, MonthlyStats, Receipt } from '../types';
+import { CategorySummary, MonthlyStats, Receipt } from '../types';
 
 /**
  * Aggregate a list of receipts into the headline + per-category breakdown
@@ -16,38 +16,38 @@ import { Category, CategorySummary, MonthlyStats, Receipt } from '../types';
  */
 export function computeStats(receipts: Receipt[]): MonthlyStats {
   const total = receipts.reduce((s, r) => s + r.totalAmount, 0);
-  const catMap: Partial<Record<Category, { total: number; count: number }>> = {};
+  const catMap: Record<string, { total: number; count: number }> = {};
 
   for (const r of receipts) {
     if (r.lineItems && r.lineItems.length > 0) {
       const itemSum = r.lineItems.reduce((s, i) => s + Math.abs(i.amount), 0);
       const scale = itemSum > 0 ? r.totalAmount / itemSum : 1;
-      const seenInThisReceipt = new Set<Category>();
+      const seenInThisReceipt = new Set<string>();
       for (const item of r.lineItems) {
-        const cat = (item.category ?? r.category) as Category;
+        const cat = (item.category ?? r.category) as string;
         if (!catMap[cat]) catMap[cat] = { total: 0, count: 0 };
-        catMap[cat]!.total += Math.abs(item.amount) * scale;
+        catMap[cat].total += Math.abs(item.amount) * scale;
         if (!seenInThisReceipt.has(cat)) {
-          catMap[cat]!.count += 1;
+          catMap[cat].count += 1;
           seenInThisReceipt.add(cat);
         }
       }
     } else {
-      const cat = r.category;
+      const cat = r.category as string;
       if (!catMap[cat]) catMap[cat] = { total: 0, count: 0 };
-      catMap[cat]!.total += r.totalAmount;
-      catMap[cat]!.count += 1;
+      catMap[cat].total += r.totalAmount;
+      catMap[cat].count += 1;
     }
   }
 
-  const categories: CategorySummary[] = (
-    Object.entries(catMap) as [Category, { total: number; count: number }][]
-  ).map(([category, { total: catTotal, count }]) => ({
-    category,
-    total: catTotal,
-    count,
-    percentage: total > 0 ? (catTotal / total) * 100 : 0,
-  }));
+  const categories: CategorySummary[] = Object.entries(catMap).map(
+    ([category, { total: catTotal, count }]) => ({
+      category,
+      total: catTotal,
+      count,
+      percentage: total > 0 ? (catTotal / total) * 100 : 0,
+    }),
+  );
 
   categories.sort((a, b) => b.total - a.total);
   const topCategory = categories[0]?.category ?? null;

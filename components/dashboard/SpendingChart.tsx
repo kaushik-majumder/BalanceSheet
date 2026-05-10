@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Category, CategorySummary } from '../../types';
 import { theme } from '../../constants/theme';
-import { CATEGORY_ICONS } from '../../constants/categories';
+import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 
 interface Props {
   data: CategorySummary[];
@@ -11,8 +11,11 @@ interface Props {
    *  Pressable with a chevron affordance and forwards the tapped
    *  category. The dashboard wires this to the History tab so users can
    *  drill in to see the receipts that contributed to that slice. */
-  onCategoryPress?: (category: Category) => void;
+  onCategoryPress?: (category: Category | string) => void;
 }
+
+const isStandardCategory = (c: string): c is Category =>
+  (ALL_CATEGORIES as readonly string[]).includes(c);
 
 export function SpendingChart({ data, onCategoryPress }: Props) {
   if (!data.length) {
@@ -29,12 +32,16 @@ export function SpendingChart({ data, onCategoryPress }: Props) {
   return (
     <View style={styles.container}>
       {sorted.map((item) => {
-        const color = theme.colors.category[item.category];
+        const standard = isStandardCategory(item.category);
+        const color = standard
+          ? theme.colors.category[item.category as Category]
+          : theme.colors.primary;
+        const icon = standard ? CATEGORY_ICONS[item.category as Category] : '🏷️';
         const barWidth = max > 0 ? (item.total / max) * 100 : 0;
         const RowContent = (
           <>
             <View style={styles.labelRow}>
-              <Text style={styles.icon}>{CATEGORY_ICONS[item.category]}</Text>
+              <Text style={styles.icon}>{icon}</Text>
               <Text style={styles.categoryName}>{item.category}</Text>
               <Text style={styles.count}>{item.count}x</Text>
               <Text style={[styles.amount, { color }]}>

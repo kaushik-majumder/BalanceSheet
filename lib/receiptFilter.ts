@@ -14,7 +14,7 @@ import { Category, Receipt } from '../types';
  */
 export function receiptMatchesCategory(
   receipt: Receipt,
-  category: Category,
+  category: Category | string,
 ): boolean {
   if (receipt.category === category) return true;
   if (receipt.categoryTags?.includes(category)) return true;

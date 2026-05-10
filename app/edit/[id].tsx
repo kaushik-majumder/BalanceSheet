@@ -26,14 +26,14 @@ import { refineUncategorizedItems } from '../../lib/itemClassifier';
 import { Receipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
-import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
+import { TagChip } from '../../components/ui/TagChip';
 import { ItemEditModal } from '../../components/receipt/ItemEditModal';
 
 type CategoryGroup = {
-  category: Category;
+  category: Category | string;
   items: LineItem[];
   subtotal: number;
 };
@@ -42,11 +42,11 @@ function groupItemsByCategory(
   items: LineItem[],
   receiptCategory: Category,
 ): CategoryGroup[] {
-  const map = new Map<Category, LineItem[]>();
+  const map = new Map<string, LineItem[]>();
   for (const item of items) {
     // Older items written before per-item categorization fall back to the
     // receipt-level category so they still group sensibly.
-    const c = item.category ?? receiptCategory;
+    const c = (item.category ?? receiptCategory) as string;
     const list = map.get(c);
     if (list) list.push(item);
     else map.set(c, [item]);
@@ -294,7 +294,7 @@ export default function EditReceiptScreen() {
           {groupItemsByCategory(items, receipt.category).map((group) => (
             <View key={group.category} style={styles.categoryGroup}>
               <View style={styles.categoryGroupHeader}>
-                <Badge category={group.category} size="sm" />
+                <TagChip tag={group.category} size="sm" />
                 <Text style={styles.categoryGroupTotal}>
                   ${group.subtotal.toFixed(2)}
                 </Text>
@@ -400,6 +400,7 @@ export default function EditReceiptScreen() {
 
       <ItemEditModal
         item={editingItem}
+        extraTags={categoryTags}
         onClose={() => setEditingItem(null)}
         onSave={(updated) => {
           if (!receipt) return;

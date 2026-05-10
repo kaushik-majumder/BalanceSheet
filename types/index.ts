@@ -14,10 +14,12 @@ export interface LineItem {
   id: string;
   name: string;
   amount: number;
-  /** Per-item category. Older line items written before per-item
-   *  categorization may be undefined; treat as the receipt's overall
-   *  category in that case. */
-  category?: Category;
+  /** Per-item category. Either one of the standard `Category` values
+   *  or a custom user-defined tag (e.g. "Gym", "Pet Food") that the
+   *  parent receipt was tagged with. Older line items written before
+   *  per-item categorization may be undefined; treat as the receipt's
+   *  overall category in that case. */
+  category?: Category | string;
 }
 
 export interface Receipt {
@@ -57,7 +59,7 @@ export interface ParsedReceipt {
 }
 
 export interface CategorySummary {
-  category: Category;
+  category: Category | string;
   total: number;
   count: number;
   percentage: number;
@@ -66,7 +68,7 @@ export interface CategorySummary {
 export interface MonthlyStats {
   totalSpent: number;
   receiptCount: number;
-  topCategory: Category | null;
+  topCategory: Category | string | null;
   avgPerReceipt: number;
   categories: CategorySummary[];
 }

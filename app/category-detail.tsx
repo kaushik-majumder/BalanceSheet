@@ -22,7 +22,11 @@ import {
 
 export default function CategoryDetailScreen() {
   const params = useLocalSearchParams<{ category?: string }>();
-  const category = isCategory(params.category) ? params.category : 'Other';
+  const category: Category | string =
+    typeof params.category === 'string' && params.category.length > 0
+      ? params.category
+      : 'Other';
+  const standard = isCategory(category);
 
   const [result, setResult] = useState<CategoryDrilldownResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,7 +46,10 @@ export default function CategoryDetailScreen() {
     }, [category]),
   );
 
-  const accent = theme.colors.category[category];
+  const accent = standard
+    ? theme.colors.category[category as Category]
+    : theme.colors.primary;
+  const headerIcon = standard ? CATEGORY_ICONS[category as Category] : '🏷️';
 
   return (
     <SafeAreaView style={styles.root} edges={['bottom']}>
@@ -51,7 +58,7 @@ export default function CategoryDetailScreen() {
           <Ionicons name="chevron-back" size={24} color={theme.colors.textPrimary} />
         </Pressable>
         <View style={styles.headerInfo}>
-          <Text style={styles.titleEmoji}>{CATEGORY_ICONS[category]}</Text>
+          <Text style={styles.titleEmoji}>{headerIcon}</Text>
           <Text style={[styles.title, { color: accent }]}>{category}</Text>
         </View>
         <View style={{ width: 32 }} />
