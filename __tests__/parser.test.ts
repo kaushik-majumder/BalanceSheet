@@ -429,6 +429,44 @@ describe('parseReceiptText - two-column OCR (names and prices on separate lines)
     expect(sum).toBeCloseTo(114.04, 2);
   });
 
+  it('drops Canadian postal codes like "L1Z 1G1" from the items list', () => {
+    const ocr = [
+      'Walmart',
+      '270 KINGSTON RD',
+      'AJAX, ON',
+      'L1Z 1G1',
+      '10LB NEOPREN 191730242300',
+      '5LB RUBBER 191730242350',
+      'YOGA MAT 840737122350',
+      '$14.97',
+      '$9.98',
+      '$21.98',
+    ].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    expect(items.length).toBe(3);
+    for (const item of items) {
+      expect(item.name).not.toMatch(/L1Z|1G1/);
+    }
+  });
+
+  it('drops bank/EMV reference rows like "RRN 613051 344514"', () => {
+    const ocr = [
+      'Walmart',
+      '10LB NEOPREN 191730242300',
+      'YOGA MAT 840737122350',
+      '$14.97',
+      '$21.98',
+      'RRN 613051 344514',
+      'AID A0000000041010',
+      'TC 6C57B8FA60B28743',
+    ].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    expect(items.length).toBe(2);
+    for (const item of items) {
+      expect(item.name).not.toMatch(/RRN|AID|TC\b/);
+    }
+  });
+
   // skipRe must catch transaction-id rows even when OCR drops the '#'.
   it('drops transaction-id rows like "ST 03001 OP 009053 TE 53" with no #', () => {
     const ocr = [

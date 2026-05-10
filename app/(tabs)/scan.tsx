@@ -43,6 +43,7 @@ export default function ScanScreen() {
   const [category, setCategory] = useState<Category>('Other');
   const [notes, setNotes] = useState('');
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [showAllItems, setShowAllItems] = useState(false);
 
   const runOCR = async (uri: string) => {
     setScanState('processing');
@@ -375,21 +376,35 @@ export default function ScanScreen() {
       {parsed && parsed.lineItems.length > 0 && (
         <Card style={styles.fieldCard}>
           <Text style={styles.fieldLabel}>Detected Line Items ({parsed.lineItems.length})</Text>
-          {parsed.lineItems.slice(0, 12).map((item) => (
-            <View key={item.id} style={styles.lineItemRow}>
-              <Text style={styles.lineItemName} numberOfLines={1}>
-                {item.name}
-              </Text>
-              {item.category && (
-                <Badge category={item.category} size="sm" />
-              )}
-              <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
-            </View>
-          ))}
+          {(showAllItems ? parsed.lineItems : parsed.lineItems.slice(0, 12)).map(
+            (item) => (
+              <View key={item.id} style={styles.lineItemRow}>
+                <Text style={styles.lineItemName} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                {item.category && <Badge category={item.category} size="sm" />}
+                <Text style={styles.lineItemAmount}>
+                  ${item.amount.toFixed(2)}
+                </Text>
+              </View>
+            ),
+          )}
           {parsed.lineItems.length > 12 && (
-            <Text style={styles.moreItems}>
-              +{parsed.lineItems.length - 12} more items
-            </Text>
+            <TouchableOpacity
+              onPress={() => setShowAllItems((v) => !v)}
+              style={styles.moreItemsBtn}
+            >
+              <Text style={styles.moreItemsText}>
+                {showAllItems
+                  ? 'Show fewer'
+                  : `Show ${parsed.lineItems.length - 12} more items`}
+              </Text>
+              <Ionicons
+                name={showAllItems ? 'chevron-up' : 'chevron-down'}
+                size={16}
+                color={theme.colors.primary}
+              />
+            </TouchableOpacity>
           )}
 
           {(parsed.subtotalAmount != null || parsed.taxAmount != null) && (
@@ -649,11 +664,18 @@ const styles = StyleSheet.create({
     fontSize: theme.font.xs,
     fontWeight: '700',
   },
-  moreItems: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    textAlign: 'center',
-    marginTop: 4,
+  moreItemsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 8,
+    paddingVertical: 8,
+  },
+  moreItemsText: {
+    color: theme.colors.primary,
+    fontSize: theme.font.sm,
+    fontWeight: '600',
   },
   buttonRow: {
     flexDirection: 'row',

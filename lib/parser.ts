@@ -228,71 +228,49 @@ function extractSubtotalAmount(text: string): number | undefined {
   return undefined;
 }
 
-function extractLineItems(
-  lines: string[],
-  excludedAmounts: Set<number> = new Set(),
-): LineItem[] {
-  // Price at end of line, optionally followed by a trailing single status
-  // letter (Walmart 'J'/'D', Costco 'E', etc.).
-  const priceAtEndRe = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
-  // A line that is JUST a price (with optional status letter) — used in
-  // two-column receipts where OCR reads names and prices separately.
-  const priceOnlyRe = /^\s*\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
-  // Pure UPC line (only digits, 8-14 long).
-  const upcOnlyRe = /^\s*\d{8,14}\s*$/;
-  // skipRe catches lines that are NEVER items: totals, taxes, payment
-  // info, and transaction-id rows. The `#` after STORE/ST/OP/TE/TR is
-  // optional because OCR sometimes drops the symbol; instead we require
-  // 3+ digits to avoid matching "270 KINGSTON ST" as a transaction id.
-  const skipRe =
-    /\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal)\b|\b(?:store|st|op|te|tr)\s*#?\s*\d{3,}/i;
-  const ALPHA_RE = /[a-z]/i;
-
-  // Run both extractors and pick the one that recovered more items.
-  //   - Inline path matches "name + price on the same line" (most receipts)
-  //   - Paired path handles two-column OCR where names and prices come
-  //     out in separate vertical blocks (common when ML Kit splits a
-  //     two-column receipt by column instead of by row)
-  // Picking the larger result means a clean inline receipt isn't penalised,
-  // and a two-column receipt where inline finds 0 falls back gracefully.
-  const inline = extractInlineItems(lines, priceAtEndRe, skipRe, ALPHA_RE);
-  const paired = extractPairedItems(lines, {
-    priceOnlyRe,
-    upcOnlyRe,
-    skipRe,
-    alphaRe: ALPHA_RE,
-    priceAtEndRe,
-    excludedAmounts,
-  });
-  return (paired.items.length > inline.length ? paired.items : inline).slice(
-    0,
-    50,
-  );
-}
+/**
+ * Lines that are NEVER receipt items:
+ *   - Totals / taxes / payment keywords
+ *   - Transaction-id rows (STORE/ST/OP/TE/TR/RRN/AID/TC with 3+ digits)
+ *   - Postal codes (Canadian "L1Z 1G1" or US "12345" / "12345-6789" on own line)
+ * The '#' after the prefix is optional because OCR sometimes drops it.
+ */
+const SKIP_LINE_RE = new RegExp(
+  [
+    '\\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal)\\b',
+    '\\b(?:store|st|op|te|tr|rrn|aid|tc|auth(?:orization)?)\\s*#?\\s*\\d{3,}',
+    '^\\s*[A-Z]\\d[A-Z]\\s+\\d[A-Z]\\d\\s*$',
+    '^\\s*\\d{5}(?:-\\d{4})?\\s*$',
+  ].join('|'),
+  'i',
+);
+const PRICE_AT_END_RE = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
+const PRICE_ONLY_RE = /^\s*\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
+const UPC_ONLY_RE = /^\s*\d{8,14}\s*$/;
+const ALPHA_RE = /[a-z]/i;
 
 /**
- * Same as extractLineItems but also returns the leftover prices (paired
- * extractor's unused price buffer). Lets parseReceiptText fall back to
- * those leftovers when subtotal/tax/total can't be matched via regex.
+ * Returns line items plus the leftover prices (paired extractor's unused
+ * price buffer). parseReceiptText uses the leftovers to recover
+ * subtotal/tax/total values when the same-line regex paths can't find them.
+ *
+ * Internally runs two extractors and picks whichever recovered more items:
+ *   - Inline: matches "NAME … PRICE" on the same line (most receipts)
+ *   - Paired: handles two-column OCR where names and prices come out as
+ *     two separate vertical blocks (common when ML Kit splits a
+ *     two-column receipt by column instead of by row)
  */
 function extractLineItemsWithLeftovers(
   lines: string[],
   excludedAmounts: Set<number> = new Set(),
 ): { items: LineItem[]; leftoverPrices: number[] } {
-  const priceAtEndRe = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
-  const priceOnlyRe = /^\s*\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
-  const upcOnlyRe = /^\s*\d{8,14}\s*$/;
-  const skipRe =
-    /\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal)\b|\b(?:store|st|op|te|tr)\s*#?\s*\d{3,}/i;
-  const ALPHA_RE = /[a-z]/i;
-
-  const inline = extractInlineItems(lines, priceAtEndRe, skipRe, ALPHA_RE);
+  const inline = extractInlineItems(lines, PRICE_AT_END_RE, SKIP_LINE_RE, ALPHA_RE);
   const paired = extractPairedItems(lines, {
-    priceOnlyRe,
-    upcOnlyRe,
-    skipRe,
+    priceOnlyRe: PRICE_ONLY_RE,
+    upcOnlyRe: UPC_ONLY_RE,
+    skipRe: SKIP_LINE_RE,
     alphaRe: ALPHA_RE,
-    priceAtEndRe,
+    priceAtEndRe: PRICE_AT_END_RE,
     excludedAmounts,
   });
   if (paired.items.length > inline.length) {
