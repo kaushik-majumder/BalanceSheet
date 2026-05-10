@@ -288,11 +288,12 @@ function extractPairedItems(
 
   for (const line of lines) {
     if (re.skipRe.test(line)) {
-      // Headers like "ST# 03001" hit skipRe before we enter the items
-      // block — just skip them. After we're in the items block, a hit
-      // means we've reached the totals/footer; stop here so we don't
-      // pair stray prices with header noise.
-      if (inItemsBlock) break;
+      // Always skip total/tax/subtotal/transaction-id/payment lines —
+      // never use them as either names or prices. Don't BREAK though:
+      // ML Kit two-column OCR sometimes interleaves the labels block
+      // (SUBTOTAL/HST/TOTAL on the left) BEFORE the prices block (the
+      // entire right column on the right). Breaking too early discards
+      // every line-item price.
       continue;
     }
     if (!inItemsBlock) {

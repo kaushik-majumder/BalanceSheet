@@ -428,4 +428,35 @@ describe('parseReceiptText - two-column OCR (names and prices on separate lines)
     );
     expect(sum).toBeCloseTo(114.04, 2);
   });
+
+  // The actual phone OCR puts the totals labels (SUBTOTAL / HST / TOTAL)
+  // at the END of the names block, BEFORE the prices block. Earlier
+  // versions of the parser broke out at "HST" and discarded every item
+  // price. This case asserts the pairer keeps going.
+  it('survives totals labels appearing inside the names block', () => {
+    const ocr = [
+      'Walmart',
+      'STORE 3001',
+      '270 KINGSTON RD',
+      'AJAX, ON',
+      '10LB NEOPREN 191730242300',
+      '5LB RUBBER 191730242350',
+      'YOGA MAT 840737122350',
+      'SUBTOTAL',
+      'HST 13.0000%',
+      'TOTAL',
+      '$14.97',
+      '$9.98',
+      '$21.98',
+      '$46.93',
+      '$6.10',
+      '$53.03',
+    ].join('\n');
+    const r = parseReceiptText(ocr);
+    expect(r.lineItems.length).toBe(3);
+    expect(r.lineItems[0].name).toMatch(/neopren/i);
+    expect(r.lineItems[0].amount).toBe(14.97);
+    expect(r.lineItems[2].name).toMatch(/yoga/i);
+    expect(r.lineItems[2].amount).toBe(21.98);
+  });
 });
