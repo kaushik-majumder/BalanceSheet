@@ -38,9 +38,23 @@ function extractStoreName(lines: string[]): string {
   for (const line of lines.slice(0, 6)) {
     if (line.length < 3) continue;
     if (skipPatterns.some((p) => p.test(line))) continue;
-    return line;
+    return cleanStoreName(line);
   }
   return 'Unknown Store';
+}
+
+/**
+ * OCR sometimes appends stray punctuation or garbage characters to a store
+ * name (e.g. "Walmart >%"). Strip non-alphanumeric trailing characters and
+ * collapse whitespace, but preserve common store-name punctuation like
+ * apostrophes, ampersands, and periods inside the name.
+ */
+function cleanStoreName(raw: string): string {
+  return raw
+    .replace(/[^a-zA-Z0-9 &'.()-]+$/g, '')   // trailing garbage
+    .replace(/^[^a-zA-Z]+/, '')                // leading garbage
+    .replace(/\s+/g, ' ')
+    .trim() || 'Unknown Store';
 }
 
 function extractDate(text: string): string {

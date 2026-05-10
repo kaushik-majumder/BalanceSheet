@@ -274,6 +274,11 @@ describe('parseReceiptText - Walmart-style receipt with UPCs and HST', () => {
     expect(r.storeName.toLowerCase()).toContain('walmart');
   });
 
+  it('strips trailing OCR garbage from the store name', () => {
+    const noisy = `Walmart >%\n${walmartText.split('\n').slice(1).join('\n')}`;
+    expect(parseReceiptText(noisy).storeName).toBe('Walmart');
+  });
+
   it('extracts the grand total ($127.60), not the subtotal or tax line', () => {
     expect(parseReceiptText(walmartText).totalAmount).toBe(127.6);
   });
