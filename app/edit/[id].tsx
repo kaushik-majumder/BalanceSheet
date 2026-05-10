@@ -205,6 +205,13 @@ export default function EditReceiptScreen() {
       selectedIds.has(it.id) ? { ...it, category } : it,
     );
     setItems(next);
+    // Keep the receipt-level Categories field in sync — if the user
+    // bulk-tags items as a category that isn't already in the chip
+    // list, add it. This makes the items section and the Categories
+    // section render the same set of tags.
+    if (!categoryTags.includes(category)) {
+      setCategoryTags([...categoryTags, category]);
+    }
     setSelectedIds(new Set());
     setShowBulkCategoryPicker(false);
     replaceLineItems(receipt.id, next).catch(() => {
@@ -213,6 +220,18 @@ export default function EditReceiptScreen() {
         'The category changes were not persisted. Try again.',
       );
     });
+  };
+
+  // Track the custom-tag input shown inside the bulk picker so users
+  // can add a brand new tag (e.g. "Garden Supplies") without leaving
+  // the sheet. Submitting applies the tag immediately AND adds it to
+  // the receipt-level categoryTags list via applyBulkCategory.
+  const [bulkCustomTag, setBulkCustomTag] = useState('');
+  const submitBulkCustomTag = () => {
+    const trimmed = bulkCustomTag.trim().slice(0, 32);
+    if (!trimmed) return;
+    setBulkCustomTag('');
+    applyBulkCategory(trimmed);
   };
 
   return (
@@ -556,6 +575,32 @@ export default function EditReceiptScreen() {
               </TouchableOpacity>
             ))}
           </View>
+
+          <Text style={styles.bulkPickerCustomLabel}>Or add a new tag</Text>
+          <View style={styles.bulkPickerCustomRow}>
+            <TextInput
+              value={bulkCustomTag}
+              onChangeText={setBulkCustomTag}
+              placeholder="Garden Supplies"
+              placeholderTextColor={theme.colors.textMuted}
+              autoCapitalize="words"
+              autoCorrect={false}
+              returnKeyType="done"
+              onSubmitEditing={submitBulkCustomTag}
+              maxLength={32}
+              style={styles.bulkPickerCustomInput}
+            />
+            <TouchableOpacity
+              onPress={submitBulkCustomTag}
+              disabled={!bulkCustomTag.trim()}
+              style={[
+                styles.bulkPickerCustomBtn,
+                !bulkCustomTag.trim() && { opacity: 0.4 },
+              ]}
+            >
+              <Text style={styles.bulkPickerCustomBtnText}>Apply</Text>
+            </TouchableOpacity>
+          </View>
         </Pressable>
       </Pressable>
     </Modal>
@@ -832,5 +877,41 @@ const styles = StyleSheet.create({
   },
   bulkPickerOption: {
     // TagChip handles its own padding; no wrapper styling needed
+  },
+  bulkPickerCustomLabel: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.xs,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginTop: theme.spacing.lg,
+    marginBottom: theme.spacing.xs,
+  },
+  bulkPickerCustomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  bulkPickerCustomInput: {
+    flex: 1,
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.md,
+    backgroundColor: theme.colors.surfaceHigh,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  bulkPickerCustomBtn: {
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: theme.radius.sm,
+  },
+  bulkPickerCustomBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: theme.font.sm,
   },
 });
