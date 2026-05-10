@@ -104,15 +104,15 @@ export default function DashboardScreen() {
       {/* Stats row */}
       <StatsRow stats={stats} />
 
-      {/* Spending breakdown chart — tap a row to drill into the History
-          tab filtered to receipts that contributed to that slice. */}
+      {/* Spending breakdown chart — tap a row to drill into the items
+          and per-receipt subtotals for that category. */}
       <Card style={styles.section}>
         <Text style={styles.sectionTitle}>Spending Breakdown</Text>
         <SpendingChart
           data={stats.categories}
           onCategoryPress={(category) => {
             router.push({
-              pathname: '/(tabs)/history',
+              pathname: '/category-detail',
               params: { category },
             } as never);
           }}
