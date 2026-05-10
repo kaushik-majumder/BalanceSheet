@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,14 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getAllReceipts, deleteReceipt, searchReceipts } from '../../lib/database';
 import { Receipt, Category } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
+import { receiptMatchesCategory } from '../../lib/receiptFilter';
 
 const FILTER_ALL = 'All' as const;
 type Filter = typeof FILTER_ALL | Category;
@@ -23,6 +24,18 @@ export default function HistoryScreen() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<Filter>(FILTER_ALL);
+  const params = useLocalSearchParams<{ category?: string }>();
+
+  // When the dashboard navigates here with `?category=X`, pre-select X
+  // as the filter. Re-fires whenever a fresh navigation arrives.
+  useEffect(() => {
+    if (
+      params.category &&
+      (ALL_CATEGORIES as readonly string[]).includes(params.category)
+    ) {
+      setActiveFilter(params.category as Category);
+    }
+  }, [params.category]);
 
   const load = useCallback(async () => {
     const data = await getAllReceipts();
@@ -59,10 +72,16 @@ export default function HistoryScreen() {
     ]);
   };
 
+  // A receipt matches the active filter when EITHER:
+  //   - its primary `category` equals the filter, OR
+  //   - any of its categoryTags equals the filter, OR
+  //   - any of its line items has that category
+  // This way a Walmart receipt with a Healthcare item shows up under the
+  // Healthcare filter even though the primary category is Groceries.
   const filtered =
     activeFilter === FILTER_ALL
       ? receipts
-      : receipts.filter((r) => r.category === activeFilter);
+      : receipts.filter((r) => receiptMatchesCategory(r, activeFilter));
 
   const totalFiltered = filtered.reduce((s, r) => s + r.totalAmount, 0);
 

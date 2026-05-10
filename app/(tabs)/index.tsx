@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { format, addMonths, subMonths } from 'date-fns';
@@ -104,10 +104,19 @@ export default function DashboardScreen() {
       {/* Stats row */}
       <StatsRow stats={stats} />
 
-      {/* Spending breakdown chart */}
+      {/* Spending breakdown chart — tap a row to drill into the History
+          tab filtered to receipts that contributed to that slice. */}
       <Card style={styles.section}>
         <Text style={styles.sectionTitle}>Spending Breakdown</Text>
-        <SpendingChart data={stats.categories} />
+        <SpendingChart
+          data={stats.categories}
+          onCategoryPress={(category) => {
+            router.push({
+              pathname: '/(tabs)/history',
+              params: { category },
+            } as never);
+          }}
+        />
       </Card>
 
       {/* Recent transactions */}
