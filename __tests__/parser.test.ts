@@ -429,6 +429,73 @@ describe('parseReceiptText - two-column OCR (names and prices on separate lines)
     expect(sum).toBeCloseTo(114.04, 2);
   });
 
+  // skipRe must catch transaction-id rows even when OCR drops the '#'.
+  it('drops transaction-id rows like "ST 03001 OP 009053 TE 53" with no #', () => {
+    const ocr = [
+      'Walmart',
+      'STORE 3001',
+      '270 KINGSTON RD',
+      'AJAX, ON',
+      'ST 03001 OP 009053 TE 53',  // OCR dropped the # symbols
+      'TR 01327',
+      '10LB NEOPREN 191730242300',
+      '5LB RUBBER 191730242350',
+      'YOGA MAT 840737122350',
+      '$14.97',
+      '$9.98',
+      '$21.98',
+    ].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    expect(items.length).toBe(3);
+    for (const item of items) {
+      expect(item.name).not.toMatch(/ST 03001|OP 009053|TE 53|TR 01327/);
+    }
+  });
+
+  // tax regex must not splice "13.00" out of a rate string like "13.0000".
+  it('extracts HST $13.56 even when the rate is written "13.0000 %"', () => {
+    const ocr = [
+      'Walmart',
+      'TR 01327',
+      '10LB NEOPREN 191730242300',
+      'SUBTOTAL',
+      'HST 13.0000 %',
+      'TOTAL',
+      '$14.97',
+      '$14.97',
+      '$1.95',
+      '$16.92',
+    ].join('\n');
+    expect(parseReceiptText(ocr).taxAmount).toBe(1.95);
+  });
+
+  // the totals amounts (subtotal, tax, total) must NOT be paired with items.
+  it('does not pair the subtotal/tax/total amounts as item prices', () => {
+    const ocr = [
+      'Walmart',
+      'TR 01327',
+      '10LB NEOPREN 191730242300',
+      '5LB RUBBER 191730242350',
+      'YOGA MAT 840737122350',
+      'SUBTOTAL',
+      'HST 13.0000%',
+      'TOTAL',
+      '$14.97',
+      '$9.98',
+      '$21.98',
+      '$46.93',  // subtotal
+      '$6.10',   // tax
+      '$53.03',  // total
+    ].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    expect(items.length).toBe(3);
+    const amounts = items.map((i) => i.amount);
+    expect(amounts).not.toContain(46.93);
+    expect(amounts).not.toContain(6.10);
+    expect(amounts).not.toContain(53.03);
+    expect(amounts).toEqual([14.97, 9.98, 21.98]);
+  });
+
   // The actual phone OCR puts the totals labels (SUBTOTAL / HST / TOTAL)
   // at the END of the names block, BEFORE the prices block. Earlier
   // versions of the parser broke out at "HST" and discarded every item

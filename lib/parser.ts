@@ -6,11 +6,58 @@ export function parseReceiptText(rawText: string): ParsedReceipt {
 
   const storeName = extractStoreName(lines);
   const date = extractDate(rawText);
-  const totalAmount = extractTotalAmount(rawText, lines);
-  const taxAmount = extractTaxAmount(rawText);
-  const subtotalAmount = extractSubtotalAmount(rawText);
+  let totalAmount = extractTotalAmount(rawText, lines);
+  let taxAmount = extractTaxAmount(rawText);
+  let subtotalAmount = extractSubtotalAmount(rawText);
   const category = detectCategory(storeName, rawText);
-  const lineItems = extractLineItems(lines);
+
+  // Amounts that look like prices but are really receipt-level totals.
+  // Exclude them when pairing line items so the subtotal/tax/total don't
+  // get attached to the last few items. Only exclude the grand total
+  // when we have CORROBORATING evidence (a Subtotal or Tax line was also
+  // extracted) — the total amount comes from a "largest dollar amount"
+  // fallback when no TOTAL keyword is present, which often equals the
+  // single most expensive item price.
+  const excluded = new Set<number>();
+  if (subtotalAmount != null) excluded.add(round2(subtotalAmount));
+  if (taxAmount != null) excluded.add(round2(taxAmount));
+  if (totalAmount > 0 && (subtotalAmount != null || taxAmount != null)) {
+    excluded.add(round2(totalAmount));
+  }
+  const { items: lineItems, leftoverPrices } = extractLineItemsWithLeftovers(
+    lines,
+    excluded,
+  );
+
+  // Two-column receipts often put the SUBTOTAL/HST/TOTAL labels on
+  // separate lines from their amounts, so the same-line regex returns
+  // undefined. The paired-parser leaves the totals-block prices in
+  // `leftoverPrices`; recover the values by sorting and matching the
+  // arithmetic identity tax + subtotal = total.
+  if (leftoverPrices.length >= 2) {
+    const sorted = [...leftoverPrices].sort((a, b) => a - b);
+    if (sorted.length >= 3) {
+      // Find a triple where small + middle ≈ large.
+      for (let i = 0; i < sorted.length - 2; i++) {
+        for (let j = i + 1; j < sorted.length - 1; j++) {
+          for (let k = j + 1; k < sorted.length; k++) {
+            if (Math.abs(sorted[i] + sorted[j] - sorted[k]) < 0.02) {
+              if (taxAmount == null) taxAmount = sorted[i];
+              if (subtotalAmount == null) subtotalAmount = sorted[j];
+              if (!(totalAmount > 0)) totalAmount = sorted[k];
+              i = sorted.length;
+              j = sorted.length;
+              break;
+            }
+          }
+        }
+      }
+    } else if (sorted.length === 2) {
+      // Subtotal + total layout (no separate tax line).
+      if (subtotalAmount == null) subtotalAmount = sorted[0];
+      if (!(totalAmount > 0)) totalAmount = sorted[1];
+    }
+  }
 
   return {
     storeName,
@@ -99,13 +146,15 @@ function extractDate(text: string): string {
 }
 
 function extractTotalAmount(text: string, lines: string[]): number {
-  // Priority 1: explicit total keyword on same line.
-  // Word boundary on "total" so "subtotal" is NOT matched as the grand total.
+  // Priority 1: explicit total keyword on same line. Word boundary on
+  // "total" so "subtotal" is NOT matched as the grand total. Same-line
+  // only ([ \t:$]+ instead of [\s:$]+) so a "TOTAL" label in a two-column
+  // receipt isn't spliced with a price several lines later.
   const inlinePatterns = [
-    /(?:grand\s+total|total\s+due|amount\s+due|you\s+paid|sale\s+total|total\s+amount|balance\s+due)[\s:$]*(\d[\d,]*\.\d{2})/i,
-    /(?:^|[^a-z])total[\s:$]+(\d[\d,]*\.\d{2})/im,
-    /(?:^|\s)amount[\s:$]+(\d[\d,]*\.\d{2})/im,
-    /(?:^|\s)balance[\s:$]+(\d[\d,]*\.\d{2})/im,
+    /(?:grand\s+total|total\s+due|amount\s+due|you\s+paid|sale\s+total|total\s+amount|balance\s+due)[ \t:$]*(\d[\d,]*\.\d{2})(?!\d)/i,
+    /(?:^|[^a-z])total[ \t:$]+(\d[\d,]*\.\d{2})(?!\d)/im,
+    /(?:^|[ \t])amount[ \t:$]+(\d[\d,]*\.\d{2})(?!\d)/im,
+    /(?:^|[ \t])balance[ \t:$]+(\d[\d,]*\.\d{2})(?!\d)/im,
   ];
 
   for (const pattern of inlinePatterns) {
@@ -150,28 +199,15 @@ function extractTotalAmount(text: string, lines: string[]): number {
 }
 
 function extractTaxAmount(text: string): number | undefined {
-  // Try: TAX, HST, GST, PST, QST, VAT, SALES TAX. Some receipts list a rate
-  // before the amount (e.g. "HST 13.0000 % $13.56") — anchor on the keyword
-  // and pick the LAST amount on the same logical match, allowing optional
-  // percentage in between.
-  const patterns = [
-    // "HST 13.0000 %  $13.56" or "HST 13% $13.56"
-    /\b(hst|gst|pst|qst|vat|sales\s+tax|tax)\b[^\d$]*(?:\d[\d.]*\s*%[^\d$]*)?\$?\s*(\d[\d,]*\.\d{2})/i,
-  ];
+  // Constrain to single-line matching ([^\n\d$]* and [ \t]* — no \n in
+  // any of the gaps) so we don't splice a tax label on one line with a
+  // price several lines later. (?!\d) prevents matching "13.00" out of
+  // the rate string "13.0000". Two-column layouts where the tax amount
+  // is far from the label fall back to leftover-prices inference in
+  // parseReceiptText.
+  const greedy =
+    /\b(hst|gst|pst|qst|vat|sales\s+tax|tax)\b[^\n\d$]*(?:\d[\d.]*[ \t]*%[^\n\d$]*)?\$?[ \t]*(\d[\d,]*\.\d{2})(?!\d)/gi;
   let best: number | undefined;
-  for (const p of patterns) {
-    const m = text.match(p);
-    if (m) {
-      const v = parseFloat(m[2].replace(',', ''));
-      if (v > 0 && v < 100_000) {
-        // Prefer the largest matched tax amount (covers receipts that show
-        // both HST and a separate GST/PST line).
-        best = best === undefined ? v : Math.max(best, v);
-      }
-    }
-  }
-  // Greedy second pass for receipts with multiple tax lines.
-  const greedy = /\b(hst|gst|pst|qst|vat|sales\s+tax|tax)\b[^\d$]*(?:\d[\d.]*\s*%[^\d$]*)?\$?\s*(\d[\d,]*\.\d{2})/gi;
   let m: RegExpExecArray | null;
   while ((m = greedy.exec(text)) !== null) {
     const v = parseFloat(m[2].replace(',', ''));
@@ -183,7 +219,8 @@ function extractTaxAmount(text: string): number | undefined {
 }
 
 function extractSubtotalAmount(text: string): number | undefined {
-  const m = text.match(/\bsub[\s-]?total\b[\s:$]*(\d[\d,]*\.\d{2})/i);
+  // Same-line only — see extractTaxAmount.
+  const m = text.match(/\bsub[\s-]?total\b[ \t:$]*(\d[\d,]*\.\d{2})(?!\d)/i);
   if (m) {
     const v = parseFloat(m[1].replace(',', ''));
     if (v > 0 && v < 100_000) return v;
@@ -191,7 +228,10 @@ function extractSubtotalAmount(text: string): number | undefined {
   return undefined;
 }
 
-function extractLineItems(lines: string[]): LineItem[] {
+function extractLineItems(
+  lines: string[],
+  excludedAmounts: Set<number> = new Set(),
+): LineItem[] {
   // Price at end of line, optionally followed by a trailing single status
   // letter (Walmart 'J'/'D', Costco 'E', etc.).
   const priceAtEndRe = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
@@ -200,7 +240,12 @@ function extractLineItems(lines: string[]): LineItem[] {
   const priceOnlyRe = /^\s*\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
   // Pure UPC line (only digits, 8-14 long).
   const upcOnlyRe = /^\s*\d{8,14}\s*$/;
-  const skipRe = /\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal|store\s*#|tr\s*#|op\s*#|te\s*#|st\s*#)\b/i;
+  // skipRe catches lines that are NEVER items: totals, taxes, payment
+  // info, and transaction-id rows. The `#` after STORE/ST/OP/TE/TR is
+  // optional because OCR sometimes drops the symbol; instead we require
+  // 3+ digits to avoid matching "270 KINGSTON ST" as a transaction id.
+  const skipRe =
+    /\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal)\b|\b(?:store|st|op|te|tr)\s*#?\s*\d{3,}/i;
   const ALPHA_RE = /[a-z]/i;
 
   // Run both extractors and pick the one that recovered more items.
@@ -217,8 +262,50 @@ function extractLineItems(lines: string[]): LineItem[] {
     skipRe,
     alphaRe: ALPHA_RE,
     priceAtEndRe,
+    excludedAmounts,
   });
-  return (paired.length > inline.length ? paired : inline).slice(0, 50);
+  return (paired.items.length > inline.length ? paired.items : inline).slice(
+    0,
+    50,
+  );
+}
+
+/**
+ * Same as extractLineItems but also returns the leftover prices (paired
+ * extractor's unused price buffer). Lets parseReceiptText fall back to
+ * those leftovers when subtotal/tax/total can't be matched via regex.
+ */
+function extractLineItemsWithLeftovers(
+  lines: string[],
+  excludedAmounts: Set<number> = new Set(),
+): { items: LineItem[]; leftoverPrices: number[] } {
+  const priceAtEndRe = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
+  const priceOnlyRe = /^\s*\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
+  const upcOnlyRe = /^\s*\d{8,14}\s*$/;
+  const skipRe =
+    /\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal)\b|\b(?:store|st|op|te|tr)\s*#?\s*\d{3,}/i;
+  const ALPHA_RE = /[a-z]/i;
+
+  const inline = extractInlineItems(lines, priceAtEndRe, skipRe, ALPHA_RE);
+  const paired = extractPairedItems(lines, {
+    priceOnlyRe,
+    upcOnlyRe,
+    skipRe,
+    alphaRe: ALPHA_RE,
+    priceAtEndRe,
+    excludedAmounts,
+  });
+  if (paired.items.length > inline.length) {
+    return {
+      items: paired.items.slice(0, 50),
+      leftoverPrices: paired.leftoverPrices,
+    };
+  }
+  return { items: inline.slice(0, 50), leftoverPrices: [] };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 function extractInlineItems(
@@ -271,8 +358,9 @@ function extractPairedItems(
     skipRe: RegExp;
     alphaRe: RegExp;
     priceAtEndRe: RegExp;
+    excludedAmounts: Set<number>;
   },
-): LineItem[] {
+): { items: LineItem[]; leftoverPrices: number[] } {
   const items: LineItem[] = [];
   const pendingNames: string[] = [];
   const pendingPrices: Array<{ amount: number }> = [];
@@ -316,8 +404,13 @@ function extractPairedItems(
           amount,
           category: categorizeItem(name),
         });
-      } else if (name === '' || !re.alphaRe.test(name)) {
-        // The line was JUST a price (no name on the same line) — buffer it.
+      } else if (
+        (name === '' || !re.alphaRe.test(name)) &&
+        !re.excludedAmounts.has(round2(amount))
+      ) {
+        // The line was JUST a price (no name on the same line) — buffer
+        // it, unless it equals the receipt's subtotal/tax/total amount,
+        // in which case it's a totals-block price, not a per-item price.
         pendingPrices.push({ amount });
       }
       continue;
@@ -327,7 +420,13 @@ function extractPairedItems(
     const priceOnly = line.match(re.priceOnlyRe);
     if (priceOnly) {
       const amount = parseFloat(priceOnly[1]);
-      if (amount > 0 && amount < 10_000) pendingPrices.push({ amount });
+      if (
+        amount > 0 &&
+        amount < 10_000 &&
+        !re.excludedAmounts.has(round2(amount))
+      ) {
+        pendingPrices.push({ amount });
+      }
       continue;
     }
 
@@ -338,7 +437,8 @@ function extractPairedItems(
     }
   }
 
-  // Pair name[i] with price[i].
+  // Pair name[i] with price[i]. Any prices left over are likely the
+  // totals block (subtotal / tax / total amounts).
   const pairCount = Math.min(pendingNames.length, pendingPrices.length);
   for (let i = 0; i < pairCount; i++) {
     items.push({
@@ -348,6 +448,7 @@ function extractPairedItems(
       category: categorizeItem(pendingNames[i]),
     });
   }
+  const leftoverPrices = pendingPrices.slice(pairCount).map((p) => p.amount);
 
-  return items;
+  return { items, leftoverPrices };
 }
