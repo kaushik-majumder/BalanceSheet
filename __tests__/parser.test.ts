@@ -492,6 +492,47 @@ describe('parseReceiptText - two-column OCR (names and prices on separate lines)
     }
   });
 
+  // AID and TC are EMV tags whose values are alphanumeric hex (start
+  // with letters, e.g. "A0000000041010" or "6C57B8FA60B28743"). The
+  // simple "label + 3+ digits" pattern misses them; we have a separate
+  // hex-aware skip rule.
+  it('drops AID with hex value starting with a letter ("AID A0000000041010")', () => {
+    const ocr = [
+      'Walmart',
+      'YOGA MAT 840737122350',
+      '$21.98',
+      'AID A0000000041010',
+    ].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    expect(items.length).toBe(1);
+    expect(items[0].name).toMatch(/yoga/i);
+  });
+
+  it('drops "No Signature Required" payment-block line', () => {
+    const ocr = [
+      'Walmart',
+      'YOGA MAT 840737122350',
+      '$21.98',
+      'No Signature Required',
+    ].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    expect(items.length).toBe(1);
+    for (const item of items) {
+      expect(item.name).not.toMatch(/signature/i);
+    }
+  });
+
+  it('does not over-match: "First Aid Kit" survives the AID skip', () => {
+    // 'First Aid Kit' contains 'aid' but Kit isn't 8+ hex chars, so the
+    // EMV-style rule shouldn't fire. The line itself isn't picked as an
+    // item here because it has no price, but it shouldn't be treated as
+    // skipped if it had been part of a real line item like "First Aid Kit 12.99".
+    const ocr = ['Walmart', 'First Aid Kit 12.99'].join('\n');
+    const items = parseReceiptText(ocr).lineItems;
+    expect(items.length).toBe(1);
+    expect(items[0].name).toMatch(/first aid kit/i);
+  });
+
   // skipRe must catch transaction-id rows even when OCR drops the '#'.
   it('drops transaction-id rows like "ST 03001 OP 009053 TE 53" with no #', () => {
     const ocr = [

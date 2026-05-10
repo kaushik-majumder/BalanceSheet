@@ -10,6 +10,8 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Platform,
+  Modal,
+  Pressable,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
@@ -20,7 +22,7 @@ import TextRecognition from 'react-native-text-recognition';
 import { v4 as uuidv4 } from 'uuid';
 import { saveReceipt } from '../../lib/database';
 import { parseReceiptText } from '../../lib/parser';
-import { ParsedReceipt, Category } from '../../types';
+import { ParsedReceipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES } from '../../constants/categories';
 import { Badge } from '../../components/ui/Badge';
@@ -40,10 +42,14 @@ export default function ScanScreen() {
   const [storeName, setStoreName] = useState('');
   const [date, setDate] = useState('');
   const [amount, setAmount] = useState('');
+  const [subtotal, setSubtotal] = useState('');
+  const [tax, setTax] = useState('');
   const [category, setCategory] = useState<Category>('Other');
   const [notes, setNotes] = useState('');
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showAllItems, setShowAllItems] = useState(false);
+  const [editingItem, setEditingItem] = useState<LineItem | null>(null);
+  const [items, setItems] = useState<LineItem[]>([]);
 
   const runOCR = async (uri: string) => {
     setScanState('processing');
@@ -56,7 +62,10 @@ export default function ScanScreen() {
       setStoreName(result.storeName);
       setDate(format(new Date(result.date), 'yyyy-MM-dd'));
       setAmount(result.totalAmount > 0 ? result.totalAmount.toFixed(2) : '');
+      setSubtotal(result.subtotalAmount != null ? result.subtotalAmount.toFixed(2) : '');
+      setTax(result.taxAmount != null ? result.taxAmount.toFixed(2) : '');
       setCategory(result.category);
+      setItems(result.lineItems);
       setScanState('review');
     } catch (err) {
       Alert.alert(
@@ -68,7 +77,10 @@ export default function ScanScreen() {
       setStoreName('');
       setDate(format(new Date(), 'yyyy-MM-dd'));
       setAmount('');
+      setSubtotal('');
+      setTax('');
       setCategory('Other');
+      setItems([]);
       setScanState('review');
     }
   };
@@ -102,8 +114,11 @@ export default function ScanScreen() {
     setStoreName('');
     setDate(format(new Date(), 'yyyy-MM-dd'));
     setAmount('');
+    setSubtotal('');
+    setTax('');
     setCategory('Other');
     setNotes('');
+    setItems([]);
     setScanState('review');
   };
 
@@ -145,21 +160,21 @@ export default function ScanScreen() {
         parsedDate = new Date();
       }
 
+      const subtotalVal = subtotal.trim() ? parseFloat(subtotal.replace(',', '.')) : undefined;
+      const taxVal = tax.trim() ? parseFloat(tax.replace(',', '.')) : undefined;
+
       await saveReceipt({
         id: uuidv4(),
         storeName: storeName.trim(),
         date: parsedDate.toISOString(),
         totalAmount: amountVal,
-        // Persist the parsed subtotal and tax so the receipt-detail screen
-        // can render the Subtotal · Tax · Total breakdown. Skip if the
-        // parser couldn't find them or the user typed the total manually.
-        subtotalAmount: parsed?.subtotalAmount,
-        taxAmount: parsed?.taxAmount,
+        subtotalAmount: subtotalVal != null && !isNaN(subtotalVal) ? subtotalVal : undefined,
+        taxAmount: taxVal != null && !isNaN(taxVal) ? taxVal : undefined,
         category,
         rawText: parsed?.rawText,
         imageUri: imageUri ?? undefined,
         notes: notes.trim() || undefined,
-        lineItems: parsed?.lineItems ?? [],
+        lineItems: items,
         createdAt: now,
         updatedAt: now,
       });
@@ -189,8 +204,23 @@ export default function ScanScreen() {
     setStoreName('');
     setDate('');
     setAmount('');
+    setSubtotal('');
+    setTax('');
     setCategory('Other');
     setNotes('');
+    setItems([]);
+    setShowAllItems(false);
+    setEditingItem(null);
+  };
+
+  const saveEditedItem = (updated: LineItem) => {
+    setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+    setEditingItem(null);
+  };
+
+  const deleteItem = (id: string) => {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+    setEditingItem(null);
   };
 
   // ─── Idle state ────────────────────────────────────────────────────────────
@@ -292,7 +322,33 @@ export default function ScanScreen() {
         />
       </Card>
 
-      {/* Amount */}
+      {/* Subtotal */}
+      <Card style={styles.fieldCard}>
+        <Text style={styles.fieldLabel}>Subtotal ($) — optional</Text>
+        <TextInput
+          style={styles.input}
+          value={subtotal}
+          onChangeText={setSubtotal}
+          placeholder="Subtotal before tax"
+          placeholderTextColor={theme.colors.textMuted}
+          keyboardType="decimal-pad"
+        />
+      </Card>
+
+      {/* Tax */}
+      <Card style={styles.fieldCard}>
+        <Text style={styles.fieldLabel}>Tax ($) — optional</Text>
+        <TextInput
+          style={styles.input}
+          value={tax}
+          onChangeText={setTax}
+          placeholder="Tax amount"
+          placeholderTextColor={theme.colors.textMuted}
+          keyboardType="decimal-pad"
+        />
+      </Card>
+
+      {/* Total */}
       <Card style={styles.fieldCard}>
         <Text style={styles.fieldLabel}>Total Amount ($)</Text>
         <TextInput
@@ -372,24 +428,34 @@ export default function ScanScreen() {
         />
       </Card>
 
-      {/* Line items preview with per-item category badges */}
-      {parsed && parsed.lineItems.length > 0 && (
+      {/* Line items — tap a row to edit / delete. */}
+      {items.length > 0 && (
         <Card style={styles.fieldCard}>
-          <Text style={styles.fieldLabel}>Detected Line Items ({parsed.lineItems.length})</Text>
-          {(showAllItems ? parsed.lineItems : parsed.lineItems.slice(0, 12)).map(
-            (item) => (
-              <View key={item.id} style={styles.lineItemRow}>
-                <Text style={styles.lineItemName} numberOfLines={1}>
-                  {item.name}
-                </Text>
-                {item.category && <Badge category={item.category} size="sm" />}
-                <Text style={styles.lineItemAmount}>
-                  ${item.amount.toFixed(2)}
-                </Text>
-              </View>
-            ),
-          )}
-          {parsed.lineItems.length > 12 && (
+          <View style={styles.itemsHeader}>
+            <Text style={styles.fieldLabel}>
+              Detected Line Items ({items.length})
+            </Text>
+            <Text style={styles.itemsHint}>Tap to edit</Text>
+          </View>
+          {(showAllItems ? items : items.slice(0, 12)).map((item) => (
+            <Pressable
+              key={item.id}
+              onPress={() => setEditingItem(item)}
+              style={({ pressed }) => [
+                styles.lineItemRow,
+                pressed && styles.lineItemRowPressed,
+              ]}
+            >
+              <Text style={styles.lineItemName} numberOfLines={1}>
+                {item.name}
+              </Text>
+              {item.category && <Badge category={item.category} size="sm" />}
+              <Text style={styles.lineItemAmount}>
+                ${item.amount.toFixed(2)}
+              </Text>
+            </Pressable>
+          ))}
+          {items.length > 12 && (
             <TouchableOpacity
               onPress={() => setShowAllItems((v) => !v)}
               style={styles.moreItemsBtn}
@@ -397,7 +463,7 @@ export default function ScanScreen() {
               <Text style={styles.moreItemsText}>
                 {showAllItems
                   ? 'Show fewer'
-                  : `Show ${parsed.lineItems.length - 12} more items`}
+                  : `Show ${items.length - 12} more items`}
               </Text>
               <Ionicons
                 name={showAllItems ? 'chevron-up' : 'chevron-down'}
@@ -406,29 +472,15 @@ export default function ScanScreen() {
               />
             </TouchableOpacity>
           )}
-
-          {(parsed.subtotalAmount != null || parsed.taxAmount != null) && (
-            <View style={styles.parsedTotals}>
-              {parsed.subtotalAmount != null && (
-                <View style={styles.parsedTotalsRow}>
-                  <Text style={styles.parsedTotalsLabel}>Detected subtotal</Text>
-                  <Text style={styles.parsedTotalsValue}>
-                    ${parsed.subtotalAmount.toFixed(2)}
-                  </Text>
-                </View>
-              )}
-              {parsed.taxAmount != null && (
-                <View style={styles.parsedTotalsRow}>
-                  <Text style={styles.parsedTotalsLabel}>Detected tax</Text>
-                  <Text style={styles.parsedTotalsValue}>
-                    ${parsed.taxAmount.toFixed(2)}
-                  </Text>
-                </View>
-              )}
-            </View>
-          )}
         </Card>
       )}
+
+      <ItemEditModal
+        item={editingItem}
+        onClose={() => setEditingItem(null)}
+        onSave={saveEditedItem}
+        onDelete={deleteItem}
+      />
 
       <View style={styles.buttonRow}>
         <Button
@@ -445,6 +497,147 @@ export default function ScanScreen() {
         />
       </View>
     </ScrollView>
+  );
+}
+
+/**
+ * Modal for editing a single detected line item — name, amount, category,
+ * or delete it entirely. Used by the scan review screen so the user can
+ * fix small OCR mistakes before saving.
+ */
+function ItemEditModal({
+  item,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  item: LineItem | null;
+  onClose: () => void;
+  onSave: (updated: LineItem) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState<Category>('Other');
+  const [showCatPicker, setShowCatPicker] = useState(false);
+
+  React.useEffect(() => {
+    if (item) {
+      setName(item.name);
+      setAmount(item.amount.toFixed(2));
+      setCategory(item.category ?? 'Other');
+      setShowCatPicker(false);
+    }
+  }, [item]);
+
+  const submit = () => {
+    if (!item) return;
+    if (!name.trim()) {
+      Alert.alert('Name required', 'Please enter an item name.');
+      return;
+    }
+    const amountVal = parseFloat(amount.replace(',', '.'));
+    if (isNaN(amountVal) || amountVal < 0) {
+      Alert.alert('Invalid amount', 'Please enter a valid amount.');
+      return;
+    }
+    onSave({ ...item, name: name.trim(), amount: amountVal, category });
+  };
+
+  const confirmDelete = () => {
+    if (!item) return;
+    Alert.alert('Delete item?', `Remove "${item.name}" from this receipt?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => onDelete(item.id) },
+    ]);
+  };
+
+  return (
+    <Modal
+      visible={item != null}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <View style={styles.itemModalRoot}>
+        <View style={styles.itemModalHeader}>
+          <Text style={styles.itemModalTitle}>Edit item</Text>
+          <Pressable onPress={onClose} hitSlop={10}>
+            <Ionicons name="close" size={26} color={theme.colors.textPrimary} />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.itemModalContent}>
+          <Card style={styles.fieldCard}>
+            <Text style={styles.fieldLabel}>Name</Text>
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="Item name"
+              placeholderTextColor={theme.colors.textMuted}
+              style={styles.input}
+            />
+          </Card>
+
+          <Card style={styles.fieldCard}>
+            <Text style={styles.fieldLabel}>Amount ($)</Text>
+            <TextInput
+              value={amount}
+              onChangeText={setAmount}
+              placeholder="0.00"
+              placeholderTextColor={theme.colors.textMuted}
+              keyboardType="decimal-pad"
+              style={styles.input}
+            />
+          </Card>
+
+          <Card style={styles.fieldCard}>
+            <Text style={styles.fieldLabel}>Category</Text>
+            <TouchableOpacity
+              onPress={() => setShowCatPicker((v) => !v)}
+              style={styles.categorySelector}
+            >
+              <Badge category={category} />
+              <Ionicons
+                name={showCatPicker ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={theme.colors.textSecondary}
+              />
+            </TouchableOpacity>
+            {showCatPicker && (
+              <View style={styles.categoryGrid}>
+                {ALL_CATEGORIES.map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    onPress={() => {
+                      setCategory(c);
+                      setShowCatPicker(false);
+                    }}
+                    style={[
+                      styles.categoryOption,
+                      c === category && {
+                        borderColor: theme.colors.category[c],
+                        backgroundColor: `${theme.colors.category[c]}22`,
+                      },
+                    ]}
+                  >
+                    <Badge category={c} size="sm" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </Card>
+
+          <Button label="Save" onPress={submit} size="lg" style={{ marginTop: theme.spacing.md }} />
+          <Button
+            label="Delete item"
+            onPress={confirmDelete}
+            variant="danger"
+            size="lg"
+            style={{ marginTop: theme.spacing.xs }}
+          />
+        </ScrollView>
+      </View>
+    </Modal>
   );
 }
 
@@ -622,14 +815,48 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
     padding: 2,
   },
+  itemsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  itemsHint: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+  },
   lineItemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 4,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+  },
+  lineItemRowPressed: {
+    backgroundColor: theme.colors.surfaceHigh,
+  },
+  itemModalRoot: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  itemModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  itemModalTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.lg,
+    fontWeight: '700',
+  },
+  itemModalContent: {
+    padding: theme.spacing.md,
+    gap: theme.spacing.sm,
   },
   lineItemName: {
     color: theme.colors.textSecondary,
@@ -643,26 +870,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     minWidth: 56,
     textAlign: 'right',
-  },
-  parsedTotals: {
-    marginTop: theme.spacing.sm,
-    paddingTop: theme.spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.borderLight,
-  },
-  parsedTotalsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 2,
-  },
-  parsedTotalsLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.xs,
-  },
-  parsedTotalsValue: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xs,
-    fontWeight: '700',
   },
   moreItemsBtn: {
     flexDirection: 'row',

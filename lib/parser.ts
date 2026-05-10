@@ -275,14 +275,17 @@ function extractSubtotalAmount(text: string): number | undefined {
 /**
  * Lines that are NEVER receipt items:
  *   - Totals / taxes / payment keywords
- *   - Transaction-id rows (STORE/ST/OP/TE/TR/RRN/AID/TC with 3+ digits)
+ *   - Transaction-id rows (STORE/ST/OP/TE/TR/RRN with 3+ digits)
+ *   - EMV / bank reference lines (AID / TC / AUTH followed by 8+ hex chars)
+ *   - "Signature [required]" payment-block lines
  *   - Postal codes (Canadian "L1Z 1G1" or US "12345" / "12345-6789" on own line)
  * The '#' after the prefix is optional because OCR sometimes drops it.
  */
 const SKIP_LINE_RE = new RegExp(
   [
-    '\\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal)\\b',
-    '\\b(?:store|st|op|te|tr|rrn|aid|tc|auth(?:orization)?)\\s*#?\\s*\\d{3,}',
+    '\\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal|signature|authorization)\\b',
+    '\\b(?:store|st|op|te|tr|rrn)\\s*#?\\s*\\d{3,}',
+    '\\b(?:aid|tc|auth)\\s*#?\\s*[a-f0-9]{8,}\\b',
     '^\\s*[A-Z]\\d[A-Z]\\s+\\d[A-Z]\\d\\s*$',
     '^\\s*\\d{5}(?:-\\d{4})?\\s*$',
   ].join('|'),
