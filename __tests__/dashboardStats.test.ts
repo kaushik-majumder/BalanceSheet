@@ -62,9 +62,11 @@ describe('computeStats', () => {
       expect(sum).toBeCloseTo(200, 2);
     });
 
-    it('scales item totals up so they include tax (sum stays at receipt total)', () => {
-      // $90 of items + $10 tax = $100 receipt. Each item should get scaled
-      // by 100/90 ≈ 1.111 so the per-category totals still sum to $100.
+    it('reports raw item amounts (no tax pro-rata) so the dashboard matches the drilldown', () => {
+      // $90 of items + $10 tax = $100 receipt. Category totals are the
+      // raw item prices ($30 / $60), NOT pro-rated to include the $10
+      // tax. This keeps the dashboard breakdown numerically identical
+      // to what the drilldown screen shows when the user taps in.
       const receipts: Receipt[] = [
         baseReceipt({
           id: 'walmart',
@@ -80,11 +82,12 @@ describe('computeStats', () => {
       ];
       const s = computeStats(receipts);
       const cats = Object.fromEntries(s.categories.map((c) => [c.category, c.total]));
-      // Pro-rata: groceries = 30 * (100/90) ≈ 33.33, clothing = 60 * (100/90) ≈ 66.67
-      expect(cats.Groceries).toBeCloseTo(33.33, 1);
-      expect(cats.Clothing).toBeCloseTo(66.67, 1);
+      expect(cats.Groceries).toBe(30);
+      expect(cats.Clothing).toBe(60);
+      // Categories sum to the SUBTOTAL, not the total — the $10 tax
+      // intentionally lives only in the hero "Total Spent" number.
       const sum = s.categories.reduce((a, c) => a + c.total, 0);
-      expect(sum).toBeCloseTo(100, 2);
+      expect(sum).toBeCloseTo(90, 2);
     });
 
     it('counts a category once per receipt, not once per item', () => {
