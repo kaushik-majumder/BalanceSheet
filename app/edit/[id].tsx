@@ -15,12 +15,40 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import { getReceiptById, updateReceipt, deleteReceipt } from '../../lib/database';
-import { Receipt, Category } from '../../types';
+import { Receipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
+
+type CategoryGroup = {
+  category: Category;
+  items: LineItem[];
+  subtotal: number;
+};
+
+function groupItemsByCategory(
+  items: LineItem[],
+  receiptCategory: Category,
+): CategoryGroup[] {
+  const map = new Map<Category, LineItem[]>();
+  for (const item of items) {
+    // Older items written before per-item categorization fall back to the
+    // receipt-level category so they still group sensibly.
+    const c = item.category ?? receiptCategory;
+    const list = map.get(c);
+    if (list) list.push(item);
+    else map.set(c, [item]);
+  }
+  return Array.from(map.entries())
+    .map(([category, list]) => ({
+      category,
+      items: list,
+      subtotal: list.reduce((s, i) => s + i.amount, 0),
+    }))
+    .sort((a, b) => b.subtotal - a.subtotal);
+}
 
 export default function EditReceiptScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -242,18 +270,55 @@ export default function EditReceiptScreen() {
         />
       </Card>
 
-      {/* Line items */}
+      {/* Line items grouped by category, with tax + total */}
       {receipt.lineItems && receipt.lineItems.length > 0 && (
         <Card style={styles.fieldCard}>
           <Text style={styles.fieldLabel}>
-            Line Items ({receipt.lineItems.length})
+            Items ({receipt.lineItems.length})
           </Text>
-          {receipt.lineItems.map((item) => (
-            <View key={item.id} style={styles.lineItemRow}>
-              <Text style={styles.lineItemName} numberOfLines={1}>{item.name}</Text>
-              <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
+          {groupItemsByCategory(receipt.lineItems, receipt.category).map((group) => (
+            <View key={group.category} style={styles.categoryGroup}>
+              <View style={styles.categoryGroupHeader}>
+                <Badge category={group.category} size="sm" />
+                <Text style={styles.categoryGroupTotal}>
+                  ${group.subtotal.toFixed(2)}
+                </Text>
+              </View>
+              {group.items.map((item) => (
+                <View key={item.id} style={styles.lineItemRow}>
+                  <Text style={styles.lineItemName} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
+                </View>
+              ))}
             </View>
           ))}
+
+          <View style={styles.totalsBlock}>
+            {receipt.subtotalAmount != null && (
+              <View style={styles.totalsRow}>
+                <Text style={styles.totalsLabel}>Subtotal</Text>
+                <Text style={styles.totalsValue}>
+                  ${receipt.subtotalAmount.toFixed(2)}
+                </Text>
+              </View>
+            )}
+            {receipt.taxAmount != null && (
+              <View style={styles.totalsRow}>
+                <Text style={styles.totalsLabel}>Tax</Text>
+                <Text style={styles.totalsValue}>
+                  ${receipt.taxAmount.toFixed(2)}
+                </Text>
+              </View>
+            )}
+            <View style={[styles.totalsRow, styles.totalsRowGrand]}>
+              <Text style={styles.totalsLabelGrand}>Total</Text>
+              <Text style={styles.totalsValueGrand}>
+                ${receipt.totalAmount.toFixed(2)}
+              </Text>
+            </View>
+          </View>
         </Card>
       )}
 
@@ -371,6 +436,58 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
     fontSize: theme.font.sm,
     fontWeight: '600',
+  },
+  categoryGroup: {
+    marginTop: theme.spacing.sm,
+  },
+  categoryGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderLight,
+  },
+  categoryGroupTotal: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    fontWeight: '700',
+  },
+  totalsBlock: {
+    marginTop: theme.spacing.md,
+    paddingTop: theme.spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.borderLight,
+  },
+  totalsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  totalsRowGrand: {
+    marginTop: theme.spacing.xs,
+    paddingTop: theme.spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  totalsLabel: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.sm,
+  },
+  totalsValue: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    fontWeight: '600',
+  },
+  totalsLabelGrand: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.md,
+    fontWeight: '700',
+  },
+  totalsValueGrand: {
+    color: theme.colors.primary,
+    fontSize: theme.font.lg,
+    fontWeight: '800',
   },
   saveBtn: {
     marginTop: theme.spacing.sm,

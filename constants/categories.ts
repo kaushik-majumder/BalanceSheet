@@ -70,8 +70,50 @@ export const CATEGORY_KEYWORDS: Record<Category, string[]> = {
     'lab corp', 'quest diagnostics', 'radiology', 'imaging center',
     'physical therapy', 'chiropractor', 'dermatologist', 'cardiologist',
     'copay', 'deductible', 'insurance', 'specialist', 'surgery', 'procedure',
+    // Fitness / wellness products commonly sold at general retailers
+    'yoga', 'pilates', 'dumbbell', 'kettlebell', 'barbell', 'neopren', 'rubber dumbbell',
+    'weight plate', 'fitness', 'workout', 'exercise',
   ],
   Other: [],
+};
+
+/**
+ * Tokens that signal an item is for line-item categorization (not store-level).
+ * Line-item names from receipts are abbreviated and noisy, so we use shorter,
+ * distinctive substrings here. These layer on top of CATEGORY_KEYWORDS at
+ * categorize-item time only — they would be too aggressive at the store level.
+ */
+export const ITEM_CATEGORY_HINTS: Partial<Record<Category, string[]>> = {
+  Groceries: [
+    'crois', 'croissant', 'choc', 'chocolate', 'cocoa', 'cookie', 'cracker',
+    'shrimp', 'salmon', 'tuna', 'tofu', 'sausage', 'ham', 'bacon', 'turkey',
+    'apple', 'banana', 'orange', 'lemon', 'lime', 'berry', 'grape', 'mango',
+    'lettuce', 'tomato', 'potato', 'onion', 'garlic', 'carrot', 'spinach',
+    'cheese', 'yogurt', 'butter', 'cream', 'soda', 'juice', 'water',
+    'chip', 'crisps', 'candy', 'gum', 'mint', 'popcorn', 'granola',
+    'flour', 'sugar', 'salt', 'pepper', 'oil', 'sauce', 'soup', 'noodle',
+  ],
+  Healthcare: [
+    'yoga', 'pilates', 'dumbbell', 'kettlebell', 'barbell',
+    'neopren', '5lb', '10lb', '15lb', '20lb', '25lb',
+    'rubber', 'weight', 'mat', 'fitness', 'gym', 'exercise',
+    'tape', 'brace', 'first-aid',
+  ],
+  Pharmacy: [
+    'shampoo', 'soap', 'toothpaste', 'toothbrush', 'mouthwash',
+    'lotion', 'sunscreen', 'deodorant', 'razor', 'tampon', 'pad ',
+    'vitamin', 'supplement', 'tylenol', 'advil', 'aspirin', 'cough', 'cold relief',
+  ],
+  Electronics: [
+    'usb', 'hdmi', 'cable', 'charger', 'battery', 'aaa', 'aa pack',
+    'earbud', 'headphone', 'speaker', 'mouse pad',
+  ],
+  Other: [
+    // household — these don't have a dedicated category; we leave them in Other
+    'freshmtic', 'air wick', 'freshener', 'cleaner', 'detergent', 'bleach',
+    'tissue', 'paper towel', 'napkin', 'foil', 'wrap', 'storage bag',
+    'broom', 'mop', 'sponge', 'glove',
+  ],
 };
 
 export const CATEGORY_ICONS: Record<Category, string> = {

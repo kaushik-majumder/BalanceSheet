@@ -1,4 +1,4 @@
-import { detectCategory } from '../lib/categorizer';
+import { categorizeItem, cleanItemName, detectCategory } from '../lib/categorizer';
 
 describe('detectCategory', () => {
   it('returns "Other" for empty input', () => {
@@ -48,5 +48,75 @@ describe('detectCategory', () => {
 
   it('falls back to body text when store name has no keyword', () => {
     expect(detectCategory('Unknown Vendor', 'gas station fuel pump')).toBe('Gas');
+  });
+});
+
+describe('cleanItemName', () => {
+  it('strips a 12-digit UPC code from the middle of the name', () => {
+    expect(cleanItemName('TB CHC CROIS 770981561170')).toBe('TB CHC CROIS');
+  });
+
+  it('strips a trailing single-letter status code (Walmart J/D)', () => {
+    expect(cleanItemName('SHRIMP RING J')).toBe('SHRIMP RING');
+  });
+
+  it('handles UPC and status letter together', () => {
+    expect(cleanItemName('YOGA MAT 840737122350 J')).toBe('YOGA MAT');
+  });
+
+  it('collapses extra whitespace', () => {
+    expect(cleanItemName('  10LB    NEOPREN  ')).toBe('10LB NEOPREN');
+  });
+
+  it('preserves slash and ampersand for things like "salt & pepper"', () => {
+    expect(cleanItemName('Salt & Pepper')).toBe('Salt & Pepper');
+  });
+
+  it('returns empty for an all-numeric / empty input', () => {
+    expect(cleanItemName('123456789012')).toBe('');
+    expect(cleanItemName('')).toBe('');
+  });
+});
+
+describe('categorizeItem', () => {
+  it('groceries: croissant', () => {
+    expect(categorizeItem('TB CHC CROIS 770981561170')).toBe('Groceries');
+  });
+
+  it('groceries: chocolate', () => {
+    expect(categorizeItem('MRKIPCHOC 756781003060')).toBe('Groceries');
+  });
+
+  it('groceries: shrimp', () => {
+    expect(categorizeItem('SHRIMP RING 627735264120')).toBe('Groceries');
+  });
+
+  it('healthcare: yoga mat', () => {
+    expect(categorizeItem('YOGA MAT 840737122350')).toBe('Healthcare');
+  });
+
+  it('healthcare: neoprene dumbbells', () => {
+    expect(categorizeItem('10LB NEOPREN 191730242300')).toBe('Healthcare');
+  });
+
+  it('healthcare: rubber weights', () => {
+    expect(categorizeItem('5LB RUBBER 191730242350')).toBe('Healthcare');
+  });
+
+  it('other: household air freshener', () => {
+    expect(categorizeItem('AW FRESHMTIC 062338856640')).toBe('Other');
+  });
+
+  it('other: unknown abbreviated name falls back gracefully', () => {
+    expect(categorizeItem('XYZ123 999999999999')).toBe('Other');
+  });
+
+  it('falls back to Other on empty input', () => {
+    expect(categorizeItem('')).toBe('Other');
+  });
+
+  it('handles plain English item names', () => {
+    expect(categorizeItem('Organic Milk 2%')).toBe('Groceries');
+    expect(categorizeItem('iPhone Charger Cable')).toBe('Electronics');
   });
 });

@@ -1,5 +1,5 @@
 import { ParsedReceipt, LineItem } from '../types';
-import { detectCategory } from './categorizer';
+import { categorizeItem, cleanItemName, detectCategory } from './categorizer';
 
 export function parseReceiptText(rawText: string): ParsedReceipt {
   const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -7,10 +7,21 @@ export function parseReceiptText(rawText: string): ParsedReceipt {
   const storeName = extractStoreName(lines);
   const date = extractDate(rawText);
   const totalAmount = extractTotalAmount(rawText, lines);
+  const taxAmount = extractTaxAmount(rawText);
+  const subtotalAmount = extractSubtotalAmount(rawText);
   const category = detectCategory(storeName, rawText);
   const lineItems = extractLineItems(lines);
 
-  return { storeName, date, totalAmount, category, lineItems, rawText };
+  return {
+    storeName,
+    date,
+    totalAmount,
+    subtotalAmount,
+    taxAmount,
+    category,
+    lineItems,
+    rawText,
+  };
 }
 
 function extractStoreName(lines: string[]): string {
@@ -19,6 +30,7 @@ function extractStoreName(lines: string[]): string {
     /^\d+\s+\w+.*(st|ave|blvd|rd|dr|ln|way|ct|street|avenue)$/i, // address
     /\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/,                             // date
     /^(thank you|welcome|receipt|invoice|order|transaction)/i,
+    /^(how did we|complete our|please complete|tell us)/i,        // survey prompts
     /^(www\.|http)/i,
     /^[\d\s\-#]+$/,                                               // only numbers
   ];
@@ -73,13 +85,13 @@ function extractDate(text: string): string {
 }
 
 function extractTotalAmount(text: string, lines: string[]): number {
-  // Priority 1: explicit total keyword on same line
+  // Priority 1: explicit total keyword on same line.
+  // Word boundary on "total" so "subtotal" is NOT matched as the grand total.
   const inlinePatterns = [
     /(?:grand\s+total|total\s+due|amount\s+due|you\s+paid|sale\s+total|total\s+amount|balance\s+due)[\s:$]*(\d[\d,]*\.\d{2})/i,
-    /(?:^|\s)total[\s:$]+(\d[\d,]*\.\d{2})/im,
+    /(?:^|[^a-z])total[\s:$]+(\d[\d,]*\.\d{2})/im,
     /(?:^|\s)amount[\s:$]+(\d[\d,]*\.\d{2})/im,
     /(?:^|\s)balance[\s:$]+(\d[\d,]*\.\d{2})/im,
-    /(?:^|\s)subtotal[\s:$]+(\d[\d,]*\.\d{2})/im,
   ];
 
   for (const pattern of inlinePatterns) {
@@ -92,7 +104,7 @@ function extractTotalAmount(text: string, lines: string[]): number {
 
   // Priority 2: keyword line followed by price on next line
   for (let i = 0; i < lines.length - 1; i++) {
-    if (/\b(total|amount|balance)\b/i.test(lines[i])) {
+    if (/\b(total|amount|balance)\b/i.test(lines[i]) && !/sub/i.test(lines[i])) {
       const m = `${lines[i]} ${lines[i + 1]}`.match(/\$?\s*(\d[\d,]*\.\d{2})/);
       if (m) {
         const v = parseFloat(m[1].replace(',', ''));
@@ -123,10 +135,57 @@ function extractTotalAmount(text: string, lines: string[]): number {
   return 0;
 }
 
+function extractTaxAmount(text: string): number | undefined {
+  // Try: TAX, HST, GST, PST, QST, VAT, SALES TAX. Some receipts list a rate
+  // before the amount (e.g. "HST 13.0000 % $13.56") — anchor on the keyword
+  // and pick the LAST amount on the same logical match, allowing optional
+  // percentage in between.
+  const patterns = [
+    // "HST 13.0000 %  $13.56" or "HST 13% $13.56"
+    /\b(hst|gst|pst|qst|vat|sales\s+tax|tax)\b[^\d$]*(?:\d[\d.]*\s*%[^\d$]*)?\$?\s*(\d[\d,]*\.\d{2})/i,
+  ];
+  let best: number | undefined;
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) {
+      const v = parseFloat(m[2].replace(',', ''));
+      if (v > 0 && v < 100_000) {
+        // Prefer the largest matched tax amount (covers receipts that show
+        // both HST and a separate GST/PST line).
+        best = best === undefined ? v : Math.max(best, v);
+      }
+    }
+  }
+  // Greedy second pass for receipts with multiple tax lines.
+  const greedy = /\b(hst|gst|pst|qst|vat|sales\s+tax|tax)\b[^\d$]*(?:\d[\d.]*\s*%[^\d$]*)?\$?\s*(\d[\d,]*\.\d{2})/gi;
+  let m: RegExpExecArray | null;
+  while ((m = greedy.exec(text)) !== null) {
+    const v = parseFloat(m[2].replace(',', ''));
+    if (v > 0 && v < 100_000) {
+      best = best === undefined ? v : Math.max(best, v);
+    }
+  }
+  return best;
+}
+
+function extractSubtotalAmount(text: string): number | undefined {
+  const m = text.match(/\bsub[\s-]?total\b[\s:$]*(\d[\d,]*\.\d{2})/i);
+  if (m) {
+    const v = parseFloat(m[1].replace(',', ''));
+    if (v > 0 && v < 100_000) return v;
+  }
+  return undefined;
+}
+
 function extractLineItems(lines: string[]): LineItem[] {
   const items: LineItem[] = [];
-  const priceRe = /\$?\s*(\d{1,5}\.\d{2})\s*$/;
-  const skipRe = /\b(total|subtotal|tax|hst|gst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity)\b/i;
+  // Price at end of line, optionally followed by a trailing single status
+  // letter (Walmart 'J'/'D', Costco 'E', etc.).
+  const priceRe = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
+  const skipRe = /\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal|store\s*#|tr\s*#|op\s*#|te\s*#|st\s*#)\b/i;
+  // Items must look like real names — at least one alpha character once
+  // numeric noise is stripped.
+  const ALPHA_RE = /[a-z]/i;
 
   for (const line of lines) {
     if (skipRe.test(line)) continue;
@@ -135,12 +194,21 @@ function extractLineItems(lines: string[]): LineItem[] {
     if (!priceMatch) continue;
 
     const amount = parseFloat(priceMatch[1]);
-    const name = line.replace(priceMatch[0], '').replace(/\s+/g, ' ').trim();
+    if (!(amount > 0 && amount < 10_000)) continue;
 
-    if (name.length > 1 && amount > 0 && amount < 10_000) {
-      items.push({ id: Math.random().toString(36).slice(2, 9), name, amount });
-    }
+    const rawName = line.replace(priceMatch[0], '').replace(/\s+/g, ' ').trim();
+    const name = cleanItemName(rawName);
+    if (!name || !ALPHA_RE.test(name)) continue;
+    if (name.length < 2) continue;
+
+    const category = categorizeItem(name);
+    items.push({
+      id: Math.random().toString(36).slice(2, 9),
+      name,
+      amount,
+      category,
+    });
   }
 
-  return items.slice(0, 25);
+  return items.slice(0, 50);
 }

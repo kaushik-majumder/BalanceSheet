@@ -9,16 +9,18 @@ export async function initDatabase(): Promise<void> {
     PRAGMA foreign_keys = ON;
 
     CREATE TABLE IF NOT EXISTS receipts (
-      id          TEXT PRIMARY KEY,
-      store_name  TEXT NOT NULL,
-      date        TEXT NOT NULL,
-      total_amount REAL NOT NULL DEFAULT 0,
-      category    TEXT NOT NULL DEFAULT 'Other',
-      raw_text    TEXT,
-      image_uri   TEXT,
-      notes       TEXT,
-      created_at  TEXT NOT NULL,
-      updated_at  TEXT NOT NULL
+      id              TEXT PRIMARY KEY,
+      store_name      TEXT NOT NULL,
+      date            TEXT NOT NULL,
+      total_amount    REAL NOT NULL DEFAULT 0,
+      subtotal_amount REAL,
+      tax_amount      REAL,
+      category        TEXT NOT NULL DEFAULT 'Other',
+      raw_text        TEXT,
+      image_uri       TEXT,
+      notes           TEXT,
+      created_at      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS line_items (
@@ -26,6 +28,7 @@ export async function initDatabase(): Promise<void> {
       receipt_id  TEXT NOT NULL,
       name        TEXT NOT NULL,
       amount      REAL NOT NULL,
+      category    TEXT,
       FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
     );
 
@@ -45,13 +48,20 @@ export async function initDatabase(): Promise<void> {
     );
   `);
 
-  // Migration: add photo_uri to profiles for databases created before the
-  // column existed. ALTER TABLE has no IF NOT EXISTS, so we swallow the
-  // duplicate-column error.
-  try {
-    await db.execAsync(`ALTER TABLE profiles ADD COLUMN photo_uri TEXT`);
-  } catch {
-    // column already exists
+  // Migrations for columns added after initial release. ALTER TABLE has no
+  // IF NOT EXISTS, so each ADD COLUMN is wrapped to swallow duplicate-column
+  // errors on already-migrated databases.
+  for (const sql of [
+    `ALTER TABLE profiles    ADD COLUMN photo_uri        TEXT`,
+    `ALTER TABLE receipts    ADD COLUMN subtotal_amount  REAL`,
+    `ALTER TABLE receipts    ADD COLUMN tax_amount       REAL`,
+    `ALTER TABLE line_items  ADD COLUMN category         TEXT`,
+  ]) {
+    try {
+      await db.execAsync(sql);
+    } catch {
+      // column already exists
+    }
   }
 }
 
@@ -108,13 +118,16 @@ export async function saveReceipt(receipt: Receipt): Promise<void> {
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       `INSERT INTO receipts
-         (id, store_name, date, total_amount, category, raw_text, image_uri, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, store_name, date, total_amount, subtotal_amount, tax_amount,
+          category, raw_text, image_uri, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         receipt.id,
         receipt.storeName,
         receipt.date,
         receipt.totalAmount,
+        receipt.subtotalAmount ?? null,
+        receipt.taxAmount ?? null,
         receipt.category,
         receipt.rawText ?? null,
         receipt.imageUri ?? null,
@@ -126,8 +139,8 @@ export async function saveReceipt(receipt: Receipt): Promise<void> {
 
     for (const item of receipt.lineItems ?? []) {
       await db.runAsync(
-        `INSERT INTO line_items (id, receipt_id, name, amount) VALUES (?, ?, ?, ?)`,
-        [item.id, receipt.id, item.name, item.amount],
+        `INSERT INTO line_items (id, receipt_id, name, amount, category) VALUES (?, ?, ?, ?, ?)`,
+        [item.id, receipt.id, item.name, item.amount, item.category ?? null],
       );
     }
   });
@@ -136,12 +149,15 @@ export async function saveReceipt(receipt: Receipt): Promise<void> {
 export async function updateReceipt(receipt: Receipt): Promise<void> {
   await db.runAsync(
     `UPDATE receipts
-     SET store_name=?, date=?, total_amount=?, category=?, notes=?, updated_at=?
+     SET store_name=?, date=?, total_amount=?, subtotal_amount=?, tax_amount=?,
+         category=?, notes=?, updated_at=?
      WHERE id=?`,
     [
       receipt.storeName,
       receipt.date,
       receipt.totalAmount,
+      receipt.subtotalAmount ?? null,
+      receipt.taxAmount ?? null,
       receipt.category,
       receipt.notes ?? null,
       new Date().toISOString(),
@@ -163,12 +179,22 @@ export async function getReceiptById(id: string): Promise<Receipt | null> {
   const row = await db.getFirstAsync<RawRow>(`SELECT * FROM receipts WHERE id=?`, [id]);
   if (!row) return null;
 
-  const itemRows = await db.getAllAsync<{ id: string; name: string; amount: number }>(
-    `SELECT id, name, amount FROM line_items WHERE receipt_id=?`,
-    [id],
-  );
+  const itemRows = await db.getAllAsync<{
+    id: string;
+    name: string;
+    amount: number;
+    category: string | null;
+  }>(`SELECT id, name, amount, category FROM line_items WHERE receipt_id=?`, [id]);
 
-  return { ...rowToReceipt(row), lineItems: itemRows };
+  return {
+    ...rowToReceipt(row),
+    lineItems: itemRows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      amount: r.amount,
+      category: (r.category ?? undefined) as Receipt['category'] | undefined,
+    })),
+  };
 }
 
 export async function getReceiptsByMonth(year: number, month: number): Promise<Receipt[]> {
@@ -199,6 +225,8 @@ interface RawRow {
   store_name: string;
   date: string;
   total_amount: number;
+  subtotal_amount: number | null;
+  tax_amount: number | null;
   category: string;
   raw_text: string | null;
   image_uri: string | null;
@@ -213,6 +241,8 @@ function rowToReceipt(row: RawRow): Receipt {
     storeName: row.store_name,
     date: row.date,
     totalAmount: row.total_amount,
+    subtotalAmount: row.subtotal_amount ?? undefined,
+    taxAmount: row.tax_amount ?? undefined,
     category: row.category as Receipt['category'],
     rawText: row.raw_text ?? undefined,
     imageUri: row.image_uri ?? undefined,

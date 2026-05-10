@@ -180,10 +180,10 @@ describe('parseReceiptText - line items extraction', () => {
     expect(items[0].name).toBe('Apples');
   });
 
-  it('caps line items at 25 to prevent runaway parsing', () => {
+  it('caps line items at 50 to prevent runaway parsing on huge receipts', () => {
     const lines = ['Store'];
-    for (let i = 0; i < 40; i++) lines.push(`Item${i} 1.00`);
-    expect(parseReceiptText(lines.join('\n')).lineItems).toHaveLength(25);
+    for (let i = 0; i < 80; i++) lines.push(`Item${i} 1.00`);
+    expect(parseReceiptText(lines.join('\n')).lineItems).toHaveLength(50);
   });
 
   it('returns empty array when no recognizable items present', () => {
@@ -237,5 +237,108 @@ describe('parseReceiptText - integration', () => {
     const r = parseReceiptText('garbage input with no date');
     expect(() => new Date(r.date).toISOString()).not.toThrow();
     expect(new Date(r.date).getTime()).not.toBeNaN();
+  });
+});
+
+describe('parseReceiptText - Walmart-style receipt with UPCs and HST', () => {
+  // Real-world Walmart receipt: each item line ends with a 12-digit UPC code,
+  // the price, and a single-letter tax-status flag (J / D). HST is a Canadian
+  // sales tax that should be extracted separately from the grand total.
+  const walmartText = [
+    'Walmart',
+    'STORE 3001',
+    '270 KINGSTON RD E. R.R # 1',
+    'AJAX, ON  L1Z 1G1',
+    '905-426-6160',
+    'ST# 03001 OP# 009053 TE# 53 TR# 01327',
+    '10LB NEOPREN 191730242300       14.97 J',
+    '10LB NEOPREN 191730242300       14.97 J',
+    '5LB RUBBER 191730242350         9.98 J',
+    '5LB RUBBER 191730242350         9.98 J',
+    'AW FRESHMTIC 062338856640       12.47 J',
+    'TB CHC CROIS 770981561170       5.98 D',
+    'YOGA MAT 840737122350           21.98 J',
+    'PR CF DRY TL 841421125960       9.97 J',
+    'CO OPP BB S7 697678203208       5.00 J',
+    'MRKIPCHOC 756781003060          3.77 D',
+    'SHRIMP RING 627735264120        4.97 J',
+    'SUBTOTAL                        114.04',
+    'HST 13.0000 %                   13.56',
+    'TOTAL                           127.60',
+    'MCARD TEND                      127.60',
+    'CHANGE DUE                       0.00',
+  ].join('\n');
+
+  it('detects Walmart as the store', () => {
+    const r = parseReceiptText(walmartText);
+    expect(r.storeName.toLowerCase()).toContain('walmart');
+  });
+
+  it('extracts the grand total ($127.60), not the subtotal or tax line', () => {
+    expect(parseReceiptText(walmartText).totalAmount).toBe(127.6);
+  });
+
+  it('extracts HST as taxAmount ($13.56), separate from total', () => {
+    expect(parseReceiptText(walmartText).taxAmount).toBe(13.56);
+  });
+
+  it('extracts the subtotal ($114.04)', () => {
+    expect(parseReceiptText(walmartText).subtotalAmount).toBe(114.04);
+  });
+
+  it('extracts all 11 line items', () => {
+    expect(parseReceiptText(walmartText).lineItems).toHaveLength(11);
+  });
+
+  it('strips UPC codes from item names', () => {
+    const items = parseReceiptText(walmartText).lineItems;
+    for (const item of items) {
+      expect(item.name).not.toMatch(/\d{8,14}/);
+    }
+  });
+
+  it('strips trailing status letter from item names', () => {
+    const items = parseReceiptText(walmartText).lineItems;
+    for (const item of items) {
+      expect(item.name).not.toMatch(/\s+[A-Z]$/);
+    }
+  });
+
+  it('every line item has a category assigned', () => {
+    const items = parseReceiptText(walmartText).lineItems;
+    for (const item of items) {
+      expect(item.category).toBeDefined();
+    }
+  });
+
+  it('item subtotals across categories sum to the receipt subtotal', () => {
+    const items = parseReceiptText(walmartText).lineItems;
+    const sum = items.reduce((s, i) => s + i.amount, 0);
+    expect(sum).toBeCloseTo(114.04, 2);
+  });
+
+  it('food items (croissant, chocolate, shrimp) categorize as Groceries', () => {
+    const items = parseReceiptText(walmartText).lineItems;
+    const crois = items.find((i) => /crois/i.test(i.name));
+    const chocolate = items.find((i) => /choc/i.test(i.name));
+    const shrimp = items.find((i) => /shrimp/i.test(i.name));
+    expect(crois?.category).toBe('Groceries');
+    expect(chocolate?.category).toBe('Groceries');
+    expect(shrimp?.category).toBe('Groceries');
+  });
+
+  it('fitness items (neoprene weights, yoga mat, rubber) categorize as Healthcare', () => {
+    const items = parseReceiptText(walmartText).lineItems;
+    const yoga = items.find((i) => /yoga/i.test(i.name));
+    const neopren = items.find((i) => /neopren/i.test(i.name));
+    expect(yoga?.category).toBe('Healthcare');
+    expect(neopren?.category).toBe('Healthcare');
+  });
+
+  it('does not pick up the SUBTOTAL/HST/TOTAL/TEND lines as items', () => {
+    const items = parseReceiptText(walmartText).lineItems;
+    for (const item of items) {
+      expect(item.name).not.toMatch(/total|hst|tend|change/i);
+    }
   });
 });
