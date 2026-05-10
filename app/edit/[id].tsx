@@ -8,19 +8,52 @@ import {
   TouchableOpacity,
   Alert,
   Image,
+  Modal,
   Platform,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import { getReceiptById, updateReceipt, deleteReceipt } from '../../lib/database';
-import { Receipt, Category } from '../../types';
+import { refineUncategorizedItems } from '../../lib/itemClassifier';
+import { Receipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
+import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
+import { ItemEditModal } from '../../components/receipt/ItemEditModal';
+
+type CategoryGroup = {
+  category: Category;
+  items: LineItem[];
+  subtotal: number;
+};
+
+function groupItemsByCategory(
+  items: LineItem[],
+  receiptCategory: Category,
+): CategoryGroup[] {
+  const map = new Map<Category, LineItem[]>();
+  for (const item of items) {
+    // Older items written before per-item categorization fall back to the
+    // receipt-level category so they still group sensibly.
+    const c = item.category ?? receiptCategory;
+    const list = map.get(c);
+    if (list) list.push(item);
+    else map.set(c, [item]);
+  }
+  return Array.from(map.entries())
+    .map(([category, list]) => ({
+      category,
+      items: list,
+      subtotal: list.reduce((s, i) => s + i.amount, 0),
+    }))
+    .sort((a, b) => b.subtotal - a.subtotal);
+}
 
 export default function EditReceiptScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -29,27 +62,54 @@ export default function EditReceiptScreen() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [showRawText, setShowRawText] = useState(false);
 
   const [storeName, setStoreName] = useState('');
   const [date, setDate] = useState('');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<Category>('Other');
+  const [categoryTags, setCategoryTags] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
+  const [items, setItems] = useState<LineItem[]>([]);
+  const [editingItem, setEditingItem] = useState<LineItem | null>(null);
 
   useEffect(() => {
     if (!id) return;
-    getReceiptById(id).then((r) => {
-      if (r) {
-        setReceipt(r);
-        setStoreName(r.storeName);
-        setDate(format(new Date(r.date), 'yyyy-MM-dd'));
-        setAmount(r.totalAmount.toFixed(2));
-        setCategory(r.category);
-        setNotes(r.notes ?? '');
+    let mounted = true;
+    (async () => {
+      const r = await getReceiptById(id);
+      if (!mounted || !r) {
+        if (mounted) setLoading(false);
+        return;
       }
+      setReceipt(r);
+      setStoreName(r.storeName);
+      setDate(format(new Date(r.date), 'yyyy-MM-dd'));
+      setAmount(r.totalAmount.toFixed(2));
+      setCategory(r.category);
+      setCategoryTags(r.categoryTags ?? [r.category]);
+      setNotes(r.notes ?? '');
+      setItems(r.lineItems ?? []);
       setLoading(false);
-    });
+
+      // Background refinement — run the async classifier on items still
+      // marked 'Other'. Updates land in the DB; refresh local state on
+      // success so the UI re-renders the new category badges.
+      if (r.lineItems?.length) {
+        try {
+          const refined = await refineUncategorizedItems(r.lineItems);
+          if (mounted) {
+            setReceipt({ ...r, lineItems: refined });
+            setItems(refined);
+          }
+        } catch {
+          // best-effort; ignore
+        }
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, [id]);
 
   const handleSave = async () => {
@@ -74,13 +134,22 @@ export default function EditReceiptScreen() {
 
     setSaving(true);
     try {
+      // Derive primary category from the tag list — first standard
+      // category found, fall back to existing primary if all tags
+      // are custom strings.
+      const primary: Category =
+        (categoryTags.find((t) =>
+          (ALL_CATEGORIES as readonly string[]).includes(t),
+        ) as Category | undefined) ?? category;
       await updateReceipt({
         ...receipt,
         storeName: storeName.trim(),
         date: parsedDate.toISOString(),
         totalAmount: amountVal,
-        category,
+        category: primary,
+        categoryTags: categoryTags.length ? categoryTags : [primary],
         notes: notes.trim() || undefined,
+        lineItems: items,
       });
       router.back();
     } catch {
@@ -188,43 +257,10 @@ export default function EditReceiptScreen() {
         />
       </Card>
 
-      {/* Category */}
+      {/* Categories — multi-select tags */}
       <Card style={styles.fieldCard}>
-        <Text style={styles.fieldLabel}>Category</Text>
-        <TouchableOpacity
-          style={styles.categorySelector}
-          onPress={() => setShowCategoryPicker((v) => !v)}
-        >
-          <Badge category={category} />
-          <Ionicons
-            name={showCategoryPicker ? 'chevron-up' : 'chevron-down'}
-            size={18}
-            color={theme.colors.textSecondary}
-          />
-        </TouchableOpacity>
-
-        {showCategoryPicker && (
-          <View style={styles.categoryGrid}>
-            {ALL_CATEGORIES.map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                onPress={() => {
-                  setCategory(cat);
-                  setShowCategoryPicker(false);
-                }}
-                style={[
-                  styles.categoryOption,
-                  cat === category && {
-                    borderColor: theme.colors.category[cat],
-                    backgroundColor: `${theme.colors.category[cat]}22`,
-                  },
-                ]}
-              >
-                <Badge category={cat} size="sm" />
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+        <Text style={styles.fieldLabel}>Categories</Text>
+        <CategoryTagsPicker tags={categoryTags} onChange={setCategoryTags} />
       </Card>
 
       {/* Notes */}
@@ -242,20 +278,103 @@ export default function EditReceiptScreen() {
         />
       </Card>
 
-      {/* Line items */}
-      {receipt.lineItems && receipt.lineItems.length > 0 && (
+      {/* Line items grouped by category, with tax + total. Tap any
+          row to fix name/amount/category or delete it. */}
+      {items.length > 0 && (
         <Card style={styles.fieldCard}>
-          <Text style={styles.fieldLabel}>
-            Line Items ({receipt.lineItems.length})
-          </Text>
-          {receipt.lineItems.map((item) => (
-            <View key={item.id} style={styles.lineItemRow}>
-              <Text style={styles.lineItemName} numberOfLines={1}>{item.name}</Text>
-              <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
+          <View style={styles.itemsCardHeader}>
+            <Text style={styles.fieldLabel}>Items ({items.length})</Text>
+            <Text style={styles.tapHint}>Tap to edit</Text>
+          </View>
+          {groupItemsByCategory(items, receipt.category).map((group) => (
+            <View key={group.category} style={styles.categoryGroup}>
+              <View style={styles.categoryGroupHeader}>
+                <Badge category={group.category} size="sm" />
+                <Text style={styles.categoryGroupTotal}>
+                  ${group.subtotal.toFixed(2)}
+                </Text>
+              </View>
+              {group.items.map((item) => (
+                <TouchableOpacity
+                  key={item.id}
+                  onPress={() => setEditingItem(item)}
+                  style={styles.lineItemRow}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.lineItemName} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
           ))}
+
+          <View style={styles.totalsBlock}>
+            {receipt.subtotalAmount != null && (
+              <View style={styles.totalsRow}>
+                <Text style={styles.totalsLabel}>Subtotal</Text>
+                <Text style={styles.totalsValue}>
+                  ${receipt.subtotalAmount.toFixed(2)}
+                </Text>
+              </View>
+            )}
+            {receipt.taxAmount != null && (
+              <View style={styles.totalsRow}>
+                <Text style={styles.totalsLabel}>Tax</Text>
+                <Text style={styles.totalsValue}>
+                  ${receipt.taxAmount.toFixed(2)}
+                </Text>
+              </View>
+            )}
+            <View style={[styles.totalsRow, styles.totalsRowGrand]}>
+              <Text style={styles.totalsLabelGrand}>Total</Text>
+              <Text style={styles.totalsValueGrand}>
+                ${receipt.totalAmount.toFixed(2)}
+              </Text>
+            </View>
+          </View>
         </Card>
       )}
+
+      {/* Raw OCR text — useful for debugging "why didn't the parser
+          extract anything?". Opens a scrollable, share-friendly modal. */}
+      {receipt.rawText && (
+        <TouchableOpacity
+          onPress={() => setShowRawText(true)}
+          style={styles.rawTextLink}
+        >
+          <Ionicons
+            name="document-text-outline"
+            size={14}
+            color={theme.colors.textSecondary}
+          />
+          <Text style={styles.rawTextLinkText}>
+            Show raw OCR text ({receipt.rawText.length} chars)
+          </Text>
+        </TouchableOpacity>
+      )}
+
+      <Modal
+        visible={showRawText}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowRawText(false)}
+      >
+        <View style={styles.modalRoot}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Raw OCR text</Text>
+            <Pressable onPress={() => setShowRawText(false)} hitSlop={10}>
+              <Ionicons name="close" size={26} color={theme.colors.textPrimary} />
+            </Pressable>
+          </View>
+          <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalContent}>
+            <Text selectable style={styles.modalText}>
+              {receipt.rawText ?? '(empty)'}
+            </Text>
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* Actions */}
       <Button
@@ -272,6 +391,19 @@ export default function EditReceiptScreen() {
         variant="danger"
         size="lg"
         style={styles.deleteBtn}
+      />
+
+      <ItemEditModal
+        item={editingItem}
+        onClose={() => setEditingItem(null)}
+        onSave={(updated) => {
+          setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+          setEditingItem(null);
+        }}
+        onDelete={(id) => {
+          setItems((prev) => prev.filter((it) => it.id !== id));
+          setEditingItem(null);
+        }}
       />
     </ScrollView>
   );
@@ -371,6 +503,110 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
     fontSize: theme.font.sm,
     fontWeight: '600',
+  },
+  categoryGroup: {
+    marginTop: theme.spacing.sm,
+  },
+  categoryGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderLight,
+  },
+  categoryGroupTotal: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    fontWeight: '700',
+  },
+  totalsBlock: {
+    marginTop: theme.spacing.md,
+    paddingTop: theme.spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.borderLight,
+  },
+  totalsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  totalsRowGrand: {
+    marginTop: theme.spacing.xs,
+    paddingTop: theme.spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  totalsLabel: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.sm,
+  },
+  totalsValue: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    fontWeight: '600',
+  },
+  totalsLabelGrand: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.md,
+    fontWeight: '700',
+  },
+  totalsValueGrand: {
+    color: theme.colors.primary,
+    fontSize: theme.font.lg,
+    fontWeight: '800',
+  },
+  modalRoot: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  modalTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.lg,
+    fontWeight: '700',
+  },
+  modalScroll: {
+    flex: 1,
+  },
+  modalContent: {
+    padding: theme.spacing.lg,
+  },
+  modalText: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    fontFamily: 'monospace',
+    lineHeight: 18,
+  },
+  rawTextLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: theme.spacing.sm,
+    paddingVertical: 8,
+  },
+  rawTextLinkText: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.xs,
+    fontWeight: '600',
+  },
+  itemsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  tapHint: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
   },
   saveBtn: {
     marginTop: theme.spacing.sm,

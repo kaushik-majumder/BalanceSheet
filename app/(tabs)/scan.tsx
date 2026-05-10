@@ -10,8 +10,11 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Platform,
+  Modal,
+  Pressable,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,14 +23,48 @@ import TextRecognition from 'react-native-text-recognition';
 import { v4 as uuidv4 } from 'uuid';
 import { saveReceipt } from '../../lib/database';
 import { parseReceiptText } from '../../lib/parser';
-import { ParsedReceipt, Category } from '../../types';
+import { parseReceiptWithGemini } from '../../lib/geminiParseReceipt';
+import { ParsedReceipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES } from '../../constants/categories';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
+import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
+import { ItemEditModal } from '../../components/receipt/ItemEditModal';
 
 type ScanState = 'idle' | 'processing' | 'review';
+
+/**
+ * Pick the receipt-level category that best represents this set of
+ * line items: the category whose total spend across the items is
+ * largest. Returns null on an empty list.
+ */
+function pickDominantCategory(items: LineItem[]): Category | null {
+  if (!items.length) return null;
+  const spend: Partial<Record<Category, number>> = {};
+  for (const item of items) {
+    const c = item.category ?? 'Other';
+    spend[c] = (spend[c] ?? 0) + Math.abs(item.amount);
+  }
+  let best: Category = 'Other';
+  let bestSpend = -1;
+  for (const [cat, amt] of Object.entries(spend) as [Category, number][]) {
+    if (amt > bestSpend) {
+      best = cat;
+      bestSpend = amt;
+    }
+  }
+  return best;
+}
+
+function uniqueItemCategories(items: LineItem[]): Category[] {
+  const set = new Set<Category>();
+  for (const item of items) {
+    if (item.category) set.add(item.category);
+  }
+  return Array.from(set);
+}
 
 export default function ScanScreen() {
   const router = useRouter();
@@ -40,9 +77,18 @@ export default function ScanScreen() {
   const [storeName, setStoreName] = useState('');
   const [date, setDate] = useState('');
   const [amount, setAmount] = useState('');
+  const [subtotal, setSubtotal] = useState('');
+  const [tax, setTax] = useState('');
   const [category, setCategory] = useState<Category>('Other');
+  const [categoryTags, setCategoryTags] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [showAllItems, setShowAllItems] = useState(false);
+  const [editingItem, setEditingItem] = useState<LineItem | null>(null);
+  const [items, setItems] = useState<LineItem[]>([]);
+  const [aiPending, setAiPending] = useState(false);
+  const [aiApplied, setAiApplied] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [rawText, setRawText] = useState('');
 
   const runOCR = async (uri: string) => {
     setScanState('processing');
@@ -52,11 +98,24 @@ export default function ScanScreen() {
       const result = parseReceiptText(rawText);
 
       setParsed(result);
+      setRawText(rawText);
       setStoreName(result.storeName);
       setDate(format(new Date(result.date), 'yyyy-MM-dd'));
       setAmount(result.totalAmount > 0 ? result.totalAmount.toFixed(2) : '');
+      setSubtotal(result.subtotalAmount != null ? result.subtotalAmount.toFixed(2) : '');
+      setTax(result.taxAmount != null ? result.taxAmount.toFixed(2) : '');
       setCategory(result.category);
+      setCategoryTags(result.categoryTags ?? [result.category]);
+      setItems(result.lineItems);
+      setAiApplied(false);
+      setAiError(null);
       setScanState('review');
+
+      // Fire AI parse in parallel. The user sees the regex result
+      // immediately; when Gemini returns we replace the state in-place
+      // because Gemini is dramatically more accurate than the regex
+      // for messy phone-camera OCR.
+      runAiParse(rawText);
     } catch (err) {
       Alert.alert(
         'OCR Failed',
@@ -67,7 +126,10 @@ export default function ScanScreen() {
       setStoreName('');
       setDate(format(new Date(), 'yyyy-MM-dd'));
       setAmount('');
+      setSubtotal('');
+      setTax('');
       setCategory('Other');
+      setItems([]);
       setScanState('review');
     }
   };
@@ -101,8 +163,12 @@ export default function ScanScreen() {
     setStoreName('');
     setDate(format(new Date(), 'yyyy-MM-dd'));
     setAmount('');
+    setSubtotal('');
+    setTax('');
     setCategory('Other');
+    setCategoryTags([]);
     setNotes('');
+    setItems([]);
     setScanState('review');
   };
 
@@ -144,16 +210,33 @@ export default function ScanScreen() {
         parsedDate = new Date();
       }
 
+      const subtotalVal = subtotal.trim() ? parseFloat(subtotal.replace(',', '.')) : undefined;
+      const taxVal = tax.trim() ? parseFloat(tax.replace(',', '.')) : undefined;
+
+      // Primary category for dashboard aggregation: prefer the first
+      // standard category present in the tag list, otherwise the
+      // dominant item category, otherwise 'Other'.
+      const primaryCategory: Category =
+        (categoryTags.find((t) =>
+          (ALL_CATEGORIES as readonly string[]).includes(t),
+        ) as Category | undefined) ??
+        pickDominantCategory(items) ??
+        'Other';
+      const finalTags = categoryTags.length ? categoryTags : [primaryCategory];
+
       await saveReceipt({
         id: uuidv4(),
         storeName: storeName.trim(),
         date: parsedDate.toISOString(),
         totalAmount: amountVal,
-        category,
+        subtotalAmount: subtotalVal != null && !isNaN(subtotalVal) ? subtotalVal : undefined,
+        taxAmount: taxVal != null && !isNaN(taxVal) ? taxVal : undefined,
+        category: primaryCategory,
+        categoryTags: finalTags,
         rawText: parsed?.rawText,
         imageUri: imageUri ?? undefined,
         notes: notes.trim() || undefined,
-        lineItems: parsed?.lineItems ?? [],
+        lineItems: items,
         createdAt: now,
         updatedAt: now,
       });
@@ -183,8 +266,86 @@ export default function ScanScreen() {
     setStoreName('');
     setDate('');
     setAmount('');
+    setSubtotal('');
+    setTax('');
     setCategory('Other');
+    setCategoryTags([]);
     setNotes('');
+    setItems([]);
+    setShowAllItems(false);
+    setEditingItem(null);
+    setAiPending(false);
+    setAiApplied(false);
+    setAiError(null);
+    setRawText('');
+  };
+
+  const runAiParse = async (text: string) => {
+    const geminiKey = (Constants.expoConfig?.extra as { geminiApiKey?: string } | undefined)
+      ?.geminiApiKey;
+    if (!geminiKey) {
+      setAiError('No Gemini key configured.');
+      return;
+    }
+    setAiPending(true);
+    setAiError(null);
+    try {
+      const aiResult = await parseReceiptWithGemini(text, geminiKey);
+      if (!aiResult.ok) {
+        setAiError(aiResult.error.slice(0, 80));
+        return;
+      }
+      const ai = aiResult.receipt;
+      // Replace state if AI returned anything substantive. AI is almost
+      // always more accurate than the regex for noisy receipts; the only
+      // case to skip replacement is when AI returned a totally empty
+      // result.
+      const aiUseful =
+        ai.lineItems.length > 0 ||
+        ai.subtotalAmount != null ||
+        ai.taxAmount != null ||
+        ai.totalAmount > 0;
+      if (!aiUseful) {
+        setAiError('AI returned no usable data.');
+        return;
+      }
+      setStoreName(ai.storeName);
+      if (ai.date) setDate(format(new Date(ai.date), 'yyyy-MM-dd'));
+      if (ai.totalAmount > 0) setAmount(ai.totalAmount.toFixed(2));
+      if (ai.subtotalAmount != null) setSubtotal(ai.subtotalAmount.toFixed(2));
+      else setSubtotal('');
+      if (ai.taxAmount != null) setTax(ai.taxAmount.toFixed(2));
+      else setTax('');
+      setItems(ai.lineItems);
+      // Update the receipt-level category to the dominant category
+      // among line items (highest summed amount). Falls back to 'Other'.
+      const dominantCategory = pickDominantCategory(ai.lineItems);
+      if (dominantCategory) setCategory(dominantCategory);
+      // Multi-select tags: prefer Gemini's suggested categoryTags
+      // (which can include custom names like "Pet Food"), otherwise
+      // fall back to the unique categories among the items.
+      if (ai.categoryTags && ai.categoryTags.length > 0) {
+        setCategoryTags(ai.categoryTags);
+      } else {
+        const uniq = uniqueItemCategories(ai.lineItems);
+        if (uniq.length) setCategoryTags(uniq);
+      }
+      setAiApplied(true);
+    } catch (e) {
+      setAiError((e as Error)?.message?.slice(0, 80) ?? 'AI parse failed.');
+    } finally {
+      setAiPending(false);
+    }
+  };
+
+  const saveEditedItem = (updated: LineItem) => {
+    setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+    setEditingItem(null);
+  };
+
+  const deleteItem = (id: string) => {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+    setEditingItem(null);
   };
 
   // ─── Idle state ────────────────────────────────────────────────────────────
@@ -271,6 +432,38 @@ export default function ScanScreen() {
       <View style={styles.reviewHeader}>
         <Text style={styles.reviewTitle}>Review & Confirm</Text>
         <Text style={styles.reviewSub}>Edit any fields before saving</Text>
+        {aiPending && (
+          <View style={styles.aiChipPending}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={styles.aiChipText}>Improving with AI…</Text>
+          </View>
+        )}
+        {!aiPending && aiApplied && (
+          <View style={styles.aiChipApplied}>
+            <Ionicons name="sparkles" size={14} color={theme.colors.primary} />
+            <Text style={styles.aiChipText}>AI improved this receipt</Text>
+          </View>
+        )}
+        {!aiPending && aiError != null && (
+          <TouchableOpacity
+            onPress={() => runAiParse(rawText)}
+            style={styles.aiChipError}
+          >
+            <Ionicons name="alert-circle-outline" size={14} color={theme.colors.error} />
+            <Text style={styles.aiChipErrorText} numberOfLines={2}>
+              AI parse failed: {aiError}. Tap to retry.
+            </Text>
+          </TouchableOpacity>
+        )}
+        {!aiPending && !aiApplied && aiError == null && rawText && (
+          <TouchableOpacity
+            onPress={() => runAiParse(rawText)}
+            style={styles.aiRetryBtn}
+          >
+            <Ionicons name="sparkles-outline" size={14} color={theme.colors.primary} />
+            <Text style={styles.aiChipText}>Re-parse with AI</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Store name */}
@@ -286,7 +479,33 @@ export default function ScanScreen() {
         />
       </Card>
 
-      {/* Amount */}
+      {/* Subtotal */}
+      <Card style={styles.fieldCard}>
+        <Text style={styles.fieldLabel}>Subtotal ($) — optional</Text>
+        <TextInput
+          style={styles.input}
+          value={subtotal}
+          onChangeText={setSubtotal}
+          placeholder="Subtotal before tax"
+          placeholderTextColor={theme.colors.textMuted}
+          keyboardType="decimal-pad"
+        />
+      </Card>
+
+      {/* Tax */}
+      <Card style={styles.fieldCard}>
+        <Text style={styles.fieldLabel}>Tax ($) — optional</Text>
+        <TextInput
+          style={styles.input}
+          value={tax}
+          onChangeText={setTax}
+          placeholder="Tax amount"
+          placeholderTextColor={theme.colors.textMuted}
+          keyboardType="decimal-pad"
+        />
+      </Card>
+
+      {/* Total */}
       <Card style={styles.fieldCard}>
         <Text style={styles.fieldLabel}>Total Amount ($)</Text>
         <TextInput
@@ -312,43 +531,11 @@ export default function ScanScreen() {
         />
       </Card>
 
-      {/* Category */}
+      {/* Categories — multi-select chips. Includes the standard 10
+          categories plus any custom tags Gemini suggests or the user adds. */}
       <Card style={styles.fieldCard}>
-        <Text style={styles.fieldLabel}>Category</Text>
-        <TouchableOpacity
-          style={styles.categorySelector}
-          onPress={() => setShowCategoryPicker((v) => !v)}
-        >
-          <Badge category={category} />
-          <Ionicons
-            name={showCategoryPicker ? 'chevron-up' : 'chevron-down'}
-            size={18}
-            color={theme.colors.textSecondary}
-          />
-        </TouchableOpacity>
-
-        {showCategoryPicker && (
-          <View style={styles.categoryGrid}>
-            {ALL_CATEGORIES.map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                onPress={() => {
-                  setCategory(cat);
-                  setShowCategoryPicker(false);
-                }}
-                style={[
-                  styles.categoryOption,
-                  cat === category && {
-                    borderColor: theme.colors.category[cat],
-                    backgroundColor: `${theme.colors.category[cat]}22`,
-                  },
-                ]}
-              >
-                <Badge category={cat} size="sm" />
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+        <Text style={styles.fieldLabel}>Categories</Text>
+        <CategoryTagsPicker tags={categoryTags} onChange={setCategoryTags} />
       </Card>
 
       {/* Notes */}
@@ -366,23 +553,59 @@ export default function ScanScreen() {
         />
       </Card>
 
-      {/* Line items preview */}
-      {parsed && parsed.lineItems.length > 0 && (
+      {/* Line items — tap a row to edit / delete. */}
+      {items.length > 0 && (
         <Card style={styles.fieldCard}>
-          <Text style={styles.fieldLabel}>Detected Line Items ({parsed.lineItems.length})</Text>
-          {parsed.lineItems.slice(0, 8).map((item) => (
-            <View key={item.id} style={styles.lineItemRow}>
-              <Text style={styles.lineItemName} numberOfLines={1}>{item.name}</Text>
-              <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
-            </View>
-          ))}
-          {parsed.lineItems.length > 8 && (
-            <Text style={styles.moreItems}>
-              +{parsed.lineItems.length - 8} more items
+          <View style={styles.itemsHeader}>
+            <Text style={styles.fieldLabel}>
+              Detected Line Items ({items.length})
             </Text>
+            <Text style={styles.itemsHint}>Tap to edit</Text>
+          </View>
+          {(showAllItems ? items : items.slice(0, 12)).map((item) => (
+            <Pressable
+              key={item.id}
+              onPress={() => setEditingItem(item)}
+              style={({ pressed }) => [
+                styles.lineItemRow,
+                pressed && styles.lineItemRowPressed,
+              ]}
+            >
+              <Text style={styles.lineItemName} numberOfLines={1}>
+                {item.name}
+              </Text>
+              {item.category && <Badge category={item.category} size="sm" />}
+              <Text style={styles.lineItemAmount}>
+                ${item.amount.toFixed(2)}
+              </Text>
+            </Pressable>
+          ))}
+          {items.length > 12 && (
+            <TouchableOpacity
+              onPress={() => setShowAllItems((v) => !v)}
+              style={styles.moreItemsBtn}
+            >
+              <Text style={styles.moreItemsText}>
+                {showAllItems
+                  ? 'Show fewer'
+                  : `Show ${items.length - 12} more items`}
+              </Text>
+              <Ionicons
+                name={showAllItems ? 'chevron-up' : 'chevron-down'}
+                size={16}
+                color={theme.colors.primary}
+              />
+            </TouchableOpacity>
           )}
         </Card>
       )}
+
+      <ItemEditModal
+        item={editingItem}
+        onClose={() => setEditingItem(null)}
+        onSave={saveEditedItem}
+        onDelete={deleteItem}
+      />
 
       <View style={styles.buttonRow}>
         <Button
@@ -535,6 +758,84 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     fontSize: theme.font.sm,
   },
+  aiChipPending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.primaryFaint,
+    marginTop: 8,
+  },
+  aiChipApplied: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.primaryFaint,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    marginTop: 8,
+  },
+  aiChipText: {
+    color: theme.colors.primary,
+    fontSize: theme.font.xs,
+    fontWeight: '700',
+  },
+  aiChipError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radius.full,
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.4)',
+    marginTop: 8,
+    maxWidth: '100%',
+  },
+  aiChipErrorText: {
+    color: theme.colors.error,
+    fontSize: theme.font.xs,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  aiRetryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginTop: 8,
+  },
+  itemCategoriesRow: {
+    marginTop: theme.spacing.sm,
+    paddingTop: theme.spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+  },
+  itemCategoriesLabel: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    marginBottom: 6,
+  },
+  itemCategoriesChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
   fieldCard: {
     gap: theme.spacing.sm,
   },
@@ -576,29 +877,74 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
     padding: 2,
   },
+  itemsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  itemsHint: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+  },
   lineItemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 4,
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+  },
+  lineItemRowPressed: {
+    backgroundColor: theme.colors.surfaceHigh,
+  },
+  itemModalRoot: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  itemModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  itemModalTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.lg,
+    fontWeight: '700',
+  },
+  itemModalContent: {
+    padding: theme.spacing.md,
+    gap: theme.spacing.sm,
   },
   lineItemName: {
     color: theme.colors.textSecondary,
     fontSize: theme.font.sm,
     flex: 1,
-    marginRight: 8,
+    marginRight: 4,
   },
   lineItemAmount: {
     color: theme.colors.textPrimary,
     fontSize: theme.font.sm,
     fontWeight: '600',
+    minWidth: 56,
+    textAlign: 'right',
   },
-  moreItems: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    textAlign: 'center',
-    marginTop: 4,
+  moreItemsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 8,
+    paddingVertical: 8,
+  },
+  moreItemsText: {
+    color: theme.colors.primary,
+    fontSize: theme.font.sm,
+    fontWeight: '600',
   },
   buttonRow: {
     flexDirection: 'row',

@@ -32,6 +32,14 @@ export async function signInWithEmail(email: string, password: string): Promise<
 
 export async function signUpWithEmail(email: string, password: string): Promise<AuthUser> {
   const cred = await auth().createUserWithEmailAndPassword(email.trim(), password);
+  // Best-effort send the verification email. We swallow errors here so a
+  // transient send failure doesn't block account creation — the verify-email
+  // screen has a Resend button for manual retry.
+  try {
+    await cred.user.sendEmailVerification();
+  } catch {
+    // ignore
+  }
   return cred.user;
 }
 
@@ -77,6 +85,50 @@ export async function signInWithGoogle(): Promise<AuthUser> {
   const credential = auth.GoogleAuthProvider.credential(idToken);
   const cred = await auth().signInWithCredential(credential);
   return cred.user;
+}
+
+export async function sendVerificationEmail(): Promise<void> {
+  const u = auth().currentUser;
+  if (!u) throw new Error('Not signed in.');
+  await u.sendEmailVerification();
+}
+
+export async function reloadCurrentUser(): Promise<AuthUser | null> {
+  const u = auth().currentUser;
+  if (!u) return null;
+  await u.reload();
+  return auth().currentUser;
+}
+
+export type AuthProvider = 'password' | 'phone' | 'google.com' | 'other';
+
+export function getPrimaryProvider(user: AuthUser | null): AuthProvider {
+  if (!user) return 'other';
+  for (const p of user.providerData) {
+    if (p.providerId === 'password') return 'password';
+    if (p.providerId === 'phone') return 'phone';
+    if (p.providerId === 'google.com') return 'google.com';
+  }
+  return 'other';
+}
+
+export function requiresProfileForProvider(provider: AuthProvider): boolean {
+  return provider === 'password' || provider === 'phone';
+}
+
+export async function deleteCurrentAccount(): Promise<void> {
+  const u = auth().currentUser;
+  if (!u) throw new Error('Not signed in.');
+  // Best-effort sign out from Google before deleting Firebase account so
+  // the next sign-in starts truly fresh.
+  try {
+    if (await GoogleSignin.getCurrentUser()) {
+      await GoogleSignin.signOut();
+    }
+  } catch {
+    // ignore
+  }
+  await u.delete();
 }
 
 export async function signOutEverywhere(): Promise<void> {

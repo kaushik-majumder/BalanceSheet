@@ -1,0 +1,242 @@
+import { Category, LineItem } from '../types';
+import { ALL_CATEGORIES } from '../constants/categories';
+
+// Gemini 2.5 Flash with structured-JSON output. Free-tier-friendly and
+// dramatically more robust than regex for messy phone-camera OCR.
+const MODEL = 'gemini-2.5-flash';
+const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+
+export type GeminiReceipt = {
+  storeName: string;
+  date: string; // YYYY-MM-DD or empty
+  subtotalAmount?: number;
+  taxAmount?: number;
+  totalAmount: number;
+  lineItems: LineItem[];
+  /** Multi-select tags for the receipt as a whole. May include the
+   *  standard 10 category names AND custom tags Gemini suggests
+   *  (e.g. "Pet Food", "Home Decor"). 1-4 tags typical. */
+  categoryTags: string[];
+};
+
+export type GeminiParseResult =
+  | { ok: true; receipt: GeminiReceipt }
+  | { ok: false; error: string };
+
+const PROMPT = `You are a receipt parser. Extract structured data from the receipt OCR text below.
+
+Rules for ITEMS:
+- CRITICAL: pair every item NAME with the price that appears on the SAME receipt row in the original receipt. Do not shift, sort, or rearrange. Read the receipt top to bottom, row by row.
+- If the OCR text returns names and prices in two separate vertical blocks (left column then right column), treat them as parallel arrays: name[i] pairs with price[i]. Keep the original order from the receipt.
+- The item amounts must SUM to the subtotal (within $0.50 of rounding/tax tolerance). If they don't, you've paired wrong — re-check the order.
+- Strip 8-14 digit UPC/SKU codes from item names.
+- Strip leading numeric item codes (e.g. "1420528 VEGGIES PK 4" → "VEGGIES PK 4").
+- Strip the trailing single-letter tax-status flag (e.g. "H", "J", "D", "E") from item names.
+- Negative amounts (e.g. "$15.00-" or "-15.00") ARE valid items — they represent discounts. Include them with a negative amount, paired with whatever name appears on that receipt row (often a TPD/markdown line that references a previous item).
+- Do NOT include these as items, they are markers / payment / header noise:
+  - SUBTOTAL, TAX, TOTAL, AMOUNT, BALANCE, CHANGE, TENDER lines
+  - Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE
+  - Bank/EMV codes: RRN, AID, TC, AUTH, REFERENCE, APPROVAL
+  - Costco markers: "Bottom of basket", "BOB Count", "Items Sold: N"
+  - Loyalty info: "ZV Member", "Member #", "Membership"
+  - Masked card numbers (lines with mostly X's, e.g. "XXXXXXXXXXXX0933")
+  - Postal codes / phone numbers / store address lines
+  - Tax footnotes like "H = HST G = GST"
+  - Signature / approval status lines
+- For each item, choose the BEST matching category from the allowed list.
+
+Rules for FIELDS:
+- store: the merchant name, cleaned of OCR garbage characters and casing weirdness.
+- date: format as YYYY-MM-DD if findable, otherwise empty string.
+- subtotal / tax: use null if not present on the receipt. The subtotal is the sum BEFORE tax. The tax is the GST/HST/PST/sales-tax amount. Don't confuse them.
+- total: the grand total the customer paid.
+- categoryTags: 1 to 4 tags for the WHOLE receipt. Each tag MAY be one of the standard categories (${ALL_CATEGORIES.join(', ')}) OR a more specific custom tag like "Pet Food", "Home Decor", "Office Supplies", "Auto Parts", "Baby Care", "Sports Gear", etc. — whatever fits the receipt content best. Keep tags short (1-3 words). For a receipt that spans multiple types of items, include multiple tags.
+
+Allowed categories for individual line items (use EXACTLY one of these, no custom values for items): ${ALL_CATEGORIES.join(', ')}.
+
+Receipt OCR text:
+"""`;
+
+const RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    store: { type: 'string' },
+    date: { type: 'string' },
+    subtotal: { type: 'number', nullable: true },
+    tax: { type: 'number', nullable: true },
+    total: { type: 'number' },
+    categoryTags: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          amount: { type: 'number' },
+          category: {
+            type: 'string',
+            enum: ALL_CATEGORIES as unknown as string[],
+          },
+        },
+        required: ['name', 'amount', 'category'],
+      },
+    },
+  },
+  required: ['store', 'total', 'items'],
+};
+
+/**
+ * Send the OCR text to Gemini 2.5 Flash with a structured-JSON response
+ * schema. Gemini extracts a clean { store, date, subtotal, tax, total,
+ * items } payload that handles two-column receipts, lowercase tax
+ * letters, header noise, postal codes, and other quirks the regex
+ * parser struggles with.
+ */
+export async function parseReceiptWithGemini(
+  rawText: string,
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<GeminiParseResult> {
+  if (!apiKey || !rawText.trim()) {
+    return { ok: false, error: 'missing key or text' };
+  }
+
+  // Cap input at ~8000 chars (~2k tokens) — even the longest receipts
+  // fit, and this prevents pathological OCR from eating up tokens.
+  const truncated = rawText.length > 8000 ? rawText.slice(0, 8000) : rawText;
+  const prompt = `${PROMPT}\n${truncated}\n"""`;
+
+  let resp: Response;
+  try {
+    resp = await fetch(`${ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: RESPONSE_SCHEMA,
+          temperature: 0,
+          maxOutputTokens: 4096,
+        },
+      }),
+      signal,
+    });
+  } catch (e) {
+    return { ok: false, error: `network: ${(e as Error)?.message ?? 'unknown'}` };
+  }
+
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    return { ok: false, error: `http ${resp.status}: ${body.slice(0, 300)}` };
+  }
+
+  let envelope: {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  try {
+    envelope = await resp.json();
+  } catch (e) {
+    return { ok: false, error: `parse envelope: ${(e as Error)?.message}` };
+  }
+
+  const text = envelope.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) return { ok: false, error: 'empty response' };
+  return parseGeminiPayload(text);
+}
+
+/**
+ * Validate and convert Gemini's JSON reply into a typed GeminiReceipt.
+ * Tolerant of small drift (numeric strings, missing fields, unknown
+ * categories — all coerced or fallbacked).
+ */
+export function parseGeminiPayload(jsonText: string): GeminiParseResult {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(jsonText);
+  } catch (e) {
+    return { ok: false, error: `parse json: ${(e as Error)?.message}` };
+  }
+  const obj = raw as Record<string, unknown> | null;
+  if (!obj || typeof obj !== 'object') {
+    return { ok: false, error: 'reply was not an object' };
+  }
+
+  const store = typeof obj.store === 'string' ? obj.store.trim() : '';
+  const date = typeof obj.date === 'string' ? obj.date.trim() : '';
+  const total = toFiniteNumber(obj.total);
+  const subtotal = toFiniteNumber(obj.subtotal);
+  const tax = toFiniteNumber(obj.tax);
+
+  const itemsRaw = Array.isArray(obj.items) ? obj.items : [];
+  const items: LineItem[] = [];
+  for (const it of itemsRaw) {
+    if (!it || typeof it !== 'object') continue;
+    const i = it as Record<string, unknown>;
+    const name = typeof i.name === 'string' ? i.name.trim() : '';
+    const amount = toFiniteNumber(i.amount);
+    if (!name || amount == null) continue;
+    const category = isCategory(i.category) ? (i.category as Category) : 'Other';
+    items.push({
+      id: Math.random().toString(36).slice(2, 9),
+      name,
+      amount,
+      category,
+    });
+  }
+
+  // Tag list — accept any short non-empty strings up to 4. If the model
+  // omitted them, fall back to the unique categories among the items.
+  let tags: string[] = [];
+  if (Array.isArray(obj.categoryTags)) {
+    for (const t of obj.categoryTags) {
+      if (typeof t !== 'string') continue;
+      const trimmed = t.trim();
+      if (!trimmed || trimmed.length > 32) continue;
+      if (!tags.includes(trimmed)) tags.push(trimmed);
+      if (tags.length >= 6) break;
+    }
+  }
+  if (tags.length === 0) {
+    const seen = new Set<string>();
+    for (const it of items) if (it.category) seen.add(it.category);
+    tags = Array.from(seen);
+  }
+
+  return {
+    ok: true,
+    receipt: {
+      storeName: store || 'Unknown Store',
+      date: isoDateOrEmpty(date),
+      subtotalAmount: subtotal ?? undefined,
+      taxAmount: tax ?? undefined,
+      totalAmount: total ?? 0,
+      lineItems: items,
+      categoryTags: tags,
+    },
+  };
+}
+
+function toFiniteNumber(v: unknown): number | undefined {
+  if (v == null) return undefined;
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? parseFloat(v) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function isCategory(v: unknown): boolean {
+  return typeof v === 'string' && (ALL_CATEGORIES as readonly string[]).includes(v);
+}
+
+function isoDateOrEmpty(date: string): string {
+  if (!date) return new Date().toISOString();
+  // Accept YYYY-MM-DD; tolerate YYYY/MM/DD too. Anything else falls back
+  // to "now" rather than producing an invalid Date downstream.
+  const m = date.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+  if (!m) return new Date().toISOString();
+  const iso = `${m[1]}-${m[2]}-${m[3]}T00:00:00.000Z`;
+  const d = new Date(iso);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : new Date().toISOString();
+}
