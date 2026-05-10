@@ -39,36 +39,56 @@ export type GeminiParseResult =
 const PROMPT = `You are a receipt parser. Extract structured data from the receipt OCR text below.
 
 Rules for ITEMS:
-- CRITICAL: pair every item NAME with the price that appears on the SAME receipt row in the original receipt. Do not shift, sort, or rearrange. Read the receipt top to bottom, row by row.
-- If the OCR text returns names and prices in two separate vertical blocks (left column then right column), treat them as parallel arrays: name[i] pairs with price[i]. Keep the original order from the receipt.
-- The item amounts must SUM to the subtotal (within $0.50 of rounding/tax tolerance). If they don't, you've paired wrong — re-check the order.
-- Strip 8-14 digit UPC/SKU codes from item names.
-- Strip leading numeric item codes (e.g. "1420528 VEGGIES PK 4" → "VEGGIES PK 4").
-- Strip the trailing single-letter tax-status flag (e.g. "H", "J", "D", "E") from item names.
-- Negative amounts ARE valid items — they represent discounts/markdowns. Recognize ALL of these forms as negative:
-    "$15.00-"   trailing minus (Costco / warehouse chains)
-    "-15.00"    leading minus (generic)
-    "($52.50)"  parentheses (Skechers / accounting-style)
-  Emit them as their own line item with a negative amount, paired with the name on that receipt row (often a TPD/markdown reference like "TPD/1993379", or just "BOGO 50% Off"). Do NOT pre-merge them into the original item — downstream code handles that.
-- Many receipts print one product across MULTIPLE OCR rows: the first row has the NAME and PRICE, and the next few rows have METADATA (style code, size, color, promo banner, "New Price" summary). Treat all metadata rows as belonging to the previous item — do NOT emit a separate item for them. Specifically skip:
-    "Style: 183004BLK"
-    "Size: 8 Color: BLACK"
-    "BOGO 50% Off Footwear" (with or without a $0.00 price beside it)
-    "New Price: $110.00"      — this is a SUMMARY of the post-discount price, not a separate item
-    "You Saved $52.50"        — receipt-level savings summary
+- CRITICAL: emit ONE line item per PHYSICAL PRODUCT the customer is paying for, at the NET PRICE they actually paid for that product. Never emit standalone discount/promo lines, never emit metadata lines, never emit lines with a $0.00 amount.
+- Determining the NET PRICE — apply these rules to each product, in order:
+    1. If the same product has an explicit "New Price: $X" line directly below it, use $X.
+    2. Otherwise, if there's a discount line attached to that product — written as a negative number ("$15.00-", "-15.00", or "($52.50)"), or as a "TPD/{SKU}" line referencing the product's SKU — subtract that discount from the printed price and use the result.
+    3. Otherwise use the price printed on the product's name row.
+- The item amounts must SUM to the SUBTOTAL (within $0.50 of rounding). If they don't, you've made a pairing or discount mistake — re-read the receipt and fix it before responding. This is a hard requirement.
+- Pair every item NAME with the price that appears on the SAME receipt row. Read top to bottom, row by row. If OCR returns names and prices in two parallel columns, treat them as parallel arrays: name[i] ↔ price[i]. Do not shift, sort, or rearrange.
+- Strip 8-14 digit UPC/SKU codes and leading numeric item codes from names (e.g. "1420528 VEGGIES PK 4" → "VEGGIES PK 4", "197627156231 UNO - SUITED ON AIR" → "UNO - SUITED ON AIR").
+- Strip the trailing single-letter tax-status flag (e.g. "H", "J", "D", "E", "T") from item names.
+- Many receipts print one product across MULTIPLE OCR rows. The first row has the NAME and PRICE; the next rows have METADATA. Attribute metadata to the previous product — do NOT emit them as separate items. Always skip:
+    "Style: 183004BLK", "Size: 8 Color: BLACK"
+    "BOGO 50% Off Footwear" (even when it has a "$0.00" on the same line — that $0.00 is a discount placeholder for the "buy" item in a buy-one-get-one, NOT a product price)
+    "New Price: $X"          (a SUMMARY of the net price you computed above)
+    "TPD/{SKU}"              (a TPD/markdown reference — its negative amount is the discount for the SKU it references)
+    "You Saved $X"           (receipt-level savings summary)
     "Items Sold: N", "Items Returned: N"
-- When a single product has BOTH an original price AND a discount line nearby (e.g. "$104.99T" then "($52.50)"), emit them as TWO line items (one positive, one negative). The downstream merger pairs them. Do NOT collapse to the "New Price" value yourself.
-- Do NOT include these as items, they are markers / payment / header noise:
-  - SUBTOTAL, TAX, TOTAL, AMOUNT, BALANCE, CHANGE, TENDER lines
-  - Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE, Sequence Number, Approval Code, Assoc/Reg/Tran numbers
-  - Bank/EMV codes: RRN, AID, TC, AUTH, REFERENCE, APPROVAL, TVR, TSI, IAD, ARC, ACI, ISO, Application Cryptogram/Preferred Name/Label
-  - Costco markers: "Bottom of basket", "BOB Count", "Items Sold: N"
-  - Loyalty info: "ZV Member", "Member #", "Membership"
-  - Masked card numbers (lines with mostly X's, e.g. "XXXXXXXXXXXX0933")
-  - Postal codes / phone numbers / store address lines
-  - Tax footnotes like "H = HST G = GST"
-  - Signature / approval status lines, "Verified by PIN"
-- For each item, choose the BEST matching category from the allowed list. Footwear → Clothing, accessories → Clothing, shoe care/polish → Other.
+- Do NOT include these as items either — they are payment / EMV / header noise:
+    SUBTOTAL, TAX, TOTAL, AMOUNT, BALANCE, CHANGE, TENDER, AMOUNT TENDERED
+    Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE, Sequence Number, Approval Code, Assoc/Reg/Tran
+    Bank/EMV codes: RRN, AID, TC, AUTH, REFERENCE, APPROVAL, TVR, TSI, IAD, ARC, ACI, ISO, Application Cryptogram/Preferred Name/Label
+    Costco markers: "Bottom of basket", "BOB Count", "ZV Member", "Member #", "Membership"
+    Masked card numbers (mostly X's, e.g. "XXXXXXXXXXXX0933")
+    Postal codes, phone numbers, store address lines, tax footnotes ("H = HST G = GST")
+    Signature / approval status lines, "Verified by PIN"
+- For each item, choose the BEST matching category from the allowed list. Footwear → Clothing. Accessories, apparel → Clothing. Shoe care, polish, laces → Other. Restaurant food/coffee → Dining. Fuel → Gas. Prescription drugs → Pharmacy.
+
+EXAMPLE 1 — BOGO 50% Off (Skechers-style):
+OCR fragment:
+    197627156231 UNO - SUITED ON AIR $110.00T
+    Style: 183004BLK
+    Size: 8 Color: BLACK
+    BOGO 50% Off Footwear $0.00
+    New Price: $110.00
+    197976255623 ON-THE-GO FLEX - CO $104.99T
+    Style: 138215NVW
+    Size: 8 Color: NVY/WHT ($52.50)
+    BOGO 50% Off Footwear
+    New Price: $52.49
+Correct items:
+    { "name": "UNO - SUITED ON AIR",    "amount": 110.00, "category": "Clothing" }
+    { "name": "ON-THE-GO FLEX - CO",    "amount": 52.49,  "category": "Clothing" }
+(One line per shoe. The first shoe's "$0.00" BOGO line is a placeholder; the second shoe's "($52.50)" is the discount, so its net = 104.99 − 52.50 = 52.49 which matches the printed "New Price: $52.49".)
+
+EXAMPLE 2 — Costco TPD markdown:
+OCR fragment:
+    1993379 EKO MIRROR 69.99 H
+    2067431 TPD/1993379 15.00- H
+Correct items:
+    { "name": "EKO MIRROR", "amount": 54.99, "category": "Other" }
+(The TPD/1993379 line is the markdown for SKU 1993379. Net = 69.99 − 15.00 = 54.99. Emit ONE line at the net price; do NOT emit the TPD line as a separate item.)
 
 Rules for FIELDS:
 - store: the merchant name, cleaned of OCR garbage characters and casing weirdness.
