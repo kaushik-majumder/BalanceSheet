@@ -1,14 +1,23 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { CategorySummary } from '../../types';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Category, CategorySummary } from '../../types';
 import { theme } from '../../constants/theme';
-import { CATEGORY_ICONS } from '../../constants/categories';
+import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 
 interface Props {
   data: CategorySummary[];
+  /** Optional click handler. When provided, each row is rendered as a
+   *  Pressable with a chevron affordance and forwards the tapped
+   *  category. The dashboard wires this to the History tab so users can
+   *  drill in to see the receipts that contributed to that slice. */
+  onCategoryPress?: (category: Category | string) => void;
 }
 
-export function SpendingChart({ data }: Props) {
+const isStandardCategory = (c: string): c is Category =>
+  (ALL_CATEGORIES as readonly string[]).includes(c);
+
+export function SpendingChart({ data, onCategoryPress }: Props) {
   if (!data.length) {
     return (
       <View style={styles.empty}>
@@ -23,26 +32,60 @@ export function SpendingChart({ data }: Props) {
   return (
     <View style={styles.container}>
       {sorted.map((item) => {
-        const color = theme.colors.category[item.category];
+        const standard = isStandardCategory(item.category);
+        const color = standard
+          ? theme.colors.category[item.category as Category]
+          : theme.colors.primary;
+        const icon = standard ? CATEGORY_ICONS[item.category as Category] : '🏷️';
         const barWidth = max > 0 ? (item.total / max) * 100 : 0;
-
-        return (
-          <View key={item.category} style={styles.row}>
+        const RowContent = (
+          <>
             <View style={styles.labelRow}>
-              <Text style={styles.icon}>{CATEGORY_ICONS[item.category]}</Text>
+              <Text style={styles.icon}>{icon}</Text>
               <Text style={styles.categoryName}>{item.category}</Text>
               <Text style={styles.count}>{item.count}x</Text>
-              <Text style={[styles.amount, { color }]}>${item.total.toFixed(2)}</Text>
+              <Text style={[styles.amount, { color }]}>
+                ${item.total.toFixed(2)}
+              </Text>
+              {onCategoryPress && (
+                <Ionicons
+                  name="chevron-forward"
+                  size={14}
+                  color={theme.colors.textMuted}
+                  style={styles.chevron}
+                />
+              )}
             </View>
             <View style={styles.barTrack}>
               <View
                 style={[
                   styles.barFill,
-                  { width: `${barWidth}%` as any, backgroundColor: color },
+                  { width: `${barWidth}%` as `${number}%`, backgroundColor: color },
                 ]}
               />
             </View>
             <Text style={styles.percent}>{item.percentage.toFixed(0)}%</Text>
+          </>
+        );
+
+        if (onCategoryPress) {
+          return (
+            <Pressable
+              key={item.category}
+              onPress={() => onCategoryPress(item.category)}
+              style={({ pressed }) => [
+                styles.row,
+                styles.rowPressable,
+                pressed && styles.rowPressed,
+              ]}
+            >
+              {RowContent}
+            </Pressable>
+          );
+        }
+        return (
+          <View key={item.category} style={styles.row}>
+            {RowContent}
           </View>
         );
       })}
@@ -64,6 +107,15 @@ const styles = StyleSheet.create({
   },
   row: {
     gap: 6,
+  },
+  rowPressable: {
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+    marginHorizontal: -4,
+    borderRadius: theme.radius.sm,
+  },
+  rowPressed: {
+    backgroundColor: theme.colors.surfaceHigh,
   },
   labelRow: {
     flexDirection: 'row',
@@ -88,6 +140,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     minWidth: 72,
     textAlign: 'right',
+  },
+  chevron: {
+    marginLeft: 4,
   },
   barTrack: {
     height: 8,

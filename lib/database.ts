@@ -113,6 +113,32 @@ export async function updateLineItemCategory(
   );
 }
 
+/**
+ * Replace the line items on a receipt without touching any of the
+ * receipt's header fields. Used by the per-item edit modal on the
+ * receipt detail screen so item changes are saved immediately
+ * (without forcing the user to also tap Save Changes at the bottom).
+ */
+export async function replaceLineItems(
+  receiptId: string,
+  items: import('../types').LineItem[],
+): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(`DELETE FROM line_items WHERE receipt_id=?`, [receiptId]);
+    for (const item of items) {
+      await db.runAsync(
+        `INSERT INTO line_items (id, receipt_id, name, amount, category) VALUES (?, ?, ?, ?, ?)`,
+        [item.id, receiptId, item.name, item.amount, item.category ?? null],
+      );
+    }
+    // Bump the receipt's updated_at so list views know to re-render.
+    await db.runAsync(`UPDATE receipts SET updated_at=? WHERE id=?`, [
+      new Date().toISOString(),
+      receiptId,
+    ]);
+  });
+}
+
 export async function deleteAllReceipts(): Promise<void> {
   await db.execAsync(`DELETE FROM line_items; DELETE FROM receipts;`);
 }

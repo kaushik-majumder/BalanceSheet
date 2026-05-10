@@ -16,19 +16,24 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
-import { getReceiptById, updateReceipt, deleteReceipt } from '../../lib/database';
+import {
+  getReceiptById,
+  updateReceipt,
+  deleteReceipt,
+  replaceLineItems,
+} from '../../lib/database';
 import { refineUncategorizedItems } from '../../lib/itemClassifier';
 import { Receipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
-import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
+import { TagChip } from '../../components/ui/TagChip';
 import { ItemEditModal } from '../../components/receipt/ItemEditModal';
 
 type CategoryGroup = {
-  category: Category;
+  category: Category | string;
   items: LineItem[];
   subtotal: number;
 };
@@ -37,11 +42,11 @@ function groupItemsByCategory(
   items: LineItem[],
   receiptCategory: Category,
 ): CategoryGroup[] {
-  const map = new Map<Category, LineItem[]>();
+  const map = new Map<string, LineItem[]>();
   for (const item of items) {
     // Older items written before per-item categorization fall back to the
     // receipt-level category so they still group sensibly.
-    const c = item.category ?? receiptCategory;
+    const c = (item.category ?? receiptCategory) as string;
     const list = map.get(c);
     if (list) list.push(item);
     else map.set(c, [item]);
@@ -289,7 +294,7 @@ export default function EditReceiptScreen() {
           {groupItemsByCategory(items, receipt.category).map((group) => (
             <View key={group.category} style={styles.categoryGroup}>
               <View style={styles.categoryGroupHeader}>
-                <Badge category={group.category} size="sm" />
+                <TagChip tag={group.category} size="sm" />
                 <Text style={styles.categoryGroupTotal}>
                   ${group.subtotal.toFixed(2)}
                 </Text>
@@ -395,13 +400,27 @@ export default function EditReceiptScreen() {
 
       <ItemEditModal
         item={editingItem}
+        extraTags={categoryTags}
         onClose={() => setEditingItem(null)}
         onSave={(updated) => {
-          setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+          if (!receipt) return;
+          const next = items.map((it) => (it.id === updated.id ? updated : it));
+          setItems(next);
+          // Persist immediately so the dashboard, history, and category
+          // drilldown all reflect the new item category without forcing
+          // the user to also tap "Save Changes" on the receipt header.
+          replaceLineItems(receipt.id, next).catch(() => {
+            Alert.alert('Could not save', 'The item change was not persisted. Try again.');
+          });
           setEditingItem(null);
         }}
         onDelete={(id) => {
-          setItems((prev) => prev.filter((it) => it.id !== id));
+          if (!receipt) return;
+          const next = items.filter((it) => it.id !== id);
+          setItems(next);
+          replaceLineItems(receipt.id, next).catch(() => {
+            Alert.alert('Could not save', 'The item deletion was not persisted. Try again.');
+          });
           setEditingItem(null);
         }}
       />

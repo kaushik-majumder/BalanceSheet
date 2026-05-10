@@ -1,4 +1,12 @@
-import { parseReceiptText } from '../lib/parser';
+import { parseReceiptText, mergeDiscountLines } from '../lib/parser';
+import { LineItem } from '../types';
+
+const li = (over: Partial<LineItem>): LineItem => ({
+  id: over.id ?? Math.random().toString(36).slice(2),
+  name: over.name ?? '',
+  amount: over.amount ?? 0,
+  category: over.category,
+});
 
 describe('parseReceiptText - store name extraction', () => {
   it('uses the first non-noise line as the store name', () => {
@@ -743,5 +751,101 @@ describe('parseReceiptText - two-column OCR (names and prices on separate lines)
     expect(r.lineItems[0].amount).toBe(14.97);
     expect(r.lineItems[2].name).toMatch(/yoga/i);
     expect(r.lineItems[2].amount).toBe(21.98);
+  });
+});
+
+describe('mergeDiscountLines', () => {
+  it('returns the input unchanged when there are no negative amounts', () => {
+    const items = [
+      li({ name: 'Milk', amount: 5 }),
+      li({ name: 'Bread', amount: 4 }),
+    ];
+    const merged = mergeDiscountLines(items);
+    expect(merged).toHaveLength(2);
+    expect(merged.map((i) => i.amount)).toEqual([5, 4]);
+  });
+
+  it('merges a TPD/{SKU} markdown into the item whose name contains that SKU', () => {
+    // Costco pattern: discount line references the SKU of the item above.
+    const items = [
+      li({ name: 'VEGGIES PK 4', amount: 14.99 }),
+      li({ name: '1993379 EKO MIRROR', amount: 69.99 }),
+      li({ name: 'TPD/1993379', amount: -15.0 }),
+      li({ name: '12" HANGING', amount: 19.99 }),
+    ];
+    const merged = mergeDiscountLines(items);
+    expect(merged).toHaveLength(3);
+    const mirror = merged.find((i) => /mirror/i.test(i.name))!;
+    expect(mirror.amount).toBe(54.99);
+    expect(merged.some((i) => i.amount < 0)).toBe(false);
+  });
+
+  it('falls back to the immediately preceding positive line when no SKU match', () => {
+    const items = [
+      li({ name: 'T-SHIRT', amount: 25 }),
+      li({ name: 'MEMBER DISCOUNT', amount: -5 }),
+      li({ name: 'PANTS', amount: 40 }),
+    ];
+    const merged = mergeDiscountLines(items);
+    expect(merged).toHaveLength(2);
+    expect(merged.find((i) => /shirt/i.test(i.name))!.amount).toBe(20);
+  });
+
+  it('clamps the merged amount to 0 when the discount exceeds the item price', () => {
+    const items = [
+      li({ name: 'Trial item', amount: 10 }),
+      li({ name: 'Free promo', amount: -15 }),
+    ];
+    const merged = mergeDiscountLines(items);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].amount).toBe(0);
+  });
+
+  it('leaves a discount alone when there is no preceding positive item', () => {
+    const items = [
+      li({ name: 'Coupon', amount: -5 }),
+      li({ name: 'Soup', amount: 3 }),
+    ];
+    const merged = mergeDiscountLines(items);
+    // No target → discount stays as its own line.
+    expect(merged).toHaveLength(2);
+    expect(merged[0].amount).toBe(-5);
+  });
+
+  it('handles multiple discounts each merging into their own target', () => {
+    const items = [
+      li({ name: '1111111 Item A', amount: 50 }),
+      li({ name: '2222222 Item B', amount: 30 }),
+      li({ name: 'TPD/1111111', amount: -10 }),
+      li({ name: 'TPD/2222222', amount: -5 }),
+    ];
+    const merged = mergeDiscountLines(items);
+    expect(merged).toHaveLength(2);
+    const a = merged.find((i) => /item a/i.test(i.name))!;
+    const b = merged.find((i) => /item b/i.test(i.name))!;
+    expect(a.amount).toBe(40);
+    expect(b.amount).toBe(25);
+  });
+});
+
+describe('parseReceiptText - Costco TPD markdown lines', () => {
+  it('folds the TPD markdown into the EKO MIRROR price', () => {
+    const ocr = [
+      'COSTCO',
+      'WHOLESALE',
+      'N Oshawa #1591',
+      '1420528 VEGGIES PK 4 14.99 H',
+      '1993379 EKO MIRROR 69.99 H',
+      '2067431 TPD/1993379 15.00- H',
+      '1571579 12" HANGING 19.99 H',
+      'SUBTOTAL 119.96',
+      'TAX 15.60',
+      'TOTAL 135.56',
+    ].join('\n');
+    const r = parseReceiptText(ocr);
+    const mirror = r.lineItems.find((i) => /mirror/i.test(i.name));
+    expect(mirror).toBeDefined();
+    expect(mirror!.amount).toBeCloseTo(54.99, 2);
+    expect(r.lineItems.some((i) => i.amount < 0)).toBe(false);
   });
 });

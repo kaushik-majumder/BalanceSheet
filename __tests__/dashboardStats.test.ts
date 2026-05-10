@@ -62,9 +62,11 @@ describe('computeStats', () => {
       expect(sum).toBeCloseTo(200, 2);
     });
 
-    it('scales item totals up so they include tax (sum stays at receipt total)', () => {
-      // $90 of items + $10 tax = $100 receipt. Each item should get scaled
-      // by 100/90 ≈ 1.111 so the per-category totals still sum to $100.
+    it('reports raw item amounts (no tax pro-rata) so the dashboard matches the drilldown', () => {
+      // $90 of items + $10 tax = $100 receipt. Category totals are the
+      // raw item prices ($30 / $60), NOT pro-rated to include the $10
+      // tax. This keeps the dashboard breakdown numerically identical
+      // to what the drilldown screen shows when the user taps in.
       const receipts: Receipt[] = [
         baseReceipt({
           id: 'walmart',
@@ -80,11 +82,12 @@ describe('computeStats', () => {
       ];
       const s = computeStats(receipts);
       const cats = Object.fromEntries(s.categories.map((c) => [c.category, c.total]));
-      // Pro-rata: groceries = 30 * (100/90) ≈ 33.33, clothing = 60 * (100/90) ≈ 66.67
-      expect(cats.Groceries).toBeCloseTo(33.33, 1);
-      expect(cats.Clothing).toBeCloseTo(66.67, 1);
+      expect(cats.Groceries).toBe(30);
+      expect(cats.Clothing).toBe(60);
+      // Categories sum to the SUBTOTAL, not the total — the $10 tax
+      // intentionally lives only in the hero "Total Spent" number.
       const sum = s.categories.reduce((a, c) => a + c.total, 0);
-      expect(sum).toBeCloseTo(100, 2);
+      expect(sum).toBeCloseTo(90, 2);
     });
 
     it('counts a category once per receipt, not once per item', () => {
@@ -102,6 +105,52 @@ describe('computeStats', () => {
       ];
       const s = computeStats(receipts);
       expect(s.categories[0].count).toBe(1);
+    });
+
+    it('aggregates custom (non-standard) item categories as their own bucket', () => {
+      // User added a custom "Gym" tag to a Costco receipt and assigned
+      // one item to it. The dashboard breakdown should surface "Gym"
+      // as a distinct category, not collapse it into Other or Groceries.
+      const receipts: Receipt[] = [
+        baseReceipt({
+          id: 'costco',
+          totalAmount: 100,
+          category: 'Groceries',
+          lineItems: [
+            { id: '1', name: 'Milk', amount: 50, category: 'Groceries' },
+            { id: '2', name: 'Neoprene weight', amount: 50, category: 'Gym' },
+          ],
+        }),
+      ];
+      const s = computeStats(receipts);
+      const cats = Object.fromEntries(s.categories.map((c) => [c.category, c.total]));
+      expect(cats.Groceries).toBe(50);
+      expect(cats.Gym).toBe(50);
+      const sum = s.categories.reduce((a, c) => a + c.total, 0);
+      expect(sum).toBeCloseTo(100, 2);
+    });
+
+    it('subtracts (does not add) negative discount lines from their category', () => {
+      // Regression: dashboard previously used `Math.abs(item.amount)`,
+      // so a -$15 TPD/markdown line on an "Other" item contributed +$15
+      // to the Other bucket — double-counting against the EKO MIRROR.
+      // The drilldown showed the correct $54.99 (signed sum) but the
+      // dashboard showed an inflated number.
+      const receipts: Receipt[] = [
+        baseReceipt({
+          id: 'costco',
+          totalAmount: 54.99,
+          category: 'Other',
+          lineItems: [
+            { id: '1', name: 'EKO MIRROR', amount: 69.99, category: 'Other' },
+            { id: '2', name: 'TPD/1993379', amount: -15, category: 'Other' },
+          ],
+        }),
+      ];
+      const s = computeStats(receipts);
+      const other = s.categories.find((c) => c.category === 'Other')!;
+      // Net: 69.99 - 15 = 54.99 (no tax to scale → scale = 1).
+      expect(other.total).toBeCloseTo(54.99, 2);
     });
 
     it('handles items with negative amounts (discounts) without distorting categories', () => {

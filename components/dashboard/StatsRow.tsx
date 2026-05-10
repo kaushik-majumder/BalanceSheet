@@ -1,14 +1,26 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { MonthlyStats } from '../../types';
+import { Category, MonthlyStats } from '../../types';
 import { theme } from '../../constants/theme';
-import { CATEGORY_ICONS } from '../../constants/categories';
+import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 
 interface Props {
   stats: MonthlyStats;
 }
 
 export function StatsRow({ stats }: Props) {
+  const top = stats.topCategory;
+  const standardTop =
+    top && (ALL_CATEGORIES as readonly string[]).includes(top)
+      ? (top as Category)
+      : null;
+  const topIcon = standardTop ? CATEGORY_ICONS[standardTop] : '🏷️';
+  const topColor = standardTop
+    ? theme.colors.category[standardTop]
+    : top
+      ? theme.colors.primary
+      : theme.colors.textMuted;
+
   const items = [
     {
       label: 'Receipts',
@@ -24,11 +36,9 @@ export function StatsRow({ stats }: Props) {
     },
     {
       label: 'Top Category',
-      value: stats.topCategory
-        ? `${CATEGORY_ICONS[stats.topCategory]} ${stats.topCategory}`
-        : '—',
+      value: top ? `${topIcon} ${top}` : '—',
       sub: 'most spent',
-      color: stats.topCategory ? theme.colors.category[stats.topCategory] : theme.colors.textMuted,
+      color: topColor,
     },
   ];
 

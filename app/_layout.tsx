@@ -35,7 +35,12 @@ export default function RootLayout() {
  * pickTarget returns 'profile-setup' — so we still navigate there. When
  * voluntary, pickTarget returns '(tabs)' and we should leave them be.
  */
-const STICKY_VOLUNTARY = new Set(['settings', 'edit', 'profile-setup']);
+const STICKY_VOLUNTARY = new Set([
+  'settings',
+  'edit',
+  'profile-setup',
+  'category-detail',
+]);
 
 function RootStack() {
   const {
@@ -123,6 +128,13 @@ function RootStack() {
           title: 'Edit Receipt',
           presentation: 'modal',
           headerStyle: { backgroundColor: theme.colors.surface },
+        }}
+      />
+      <Stack.Screen
+        name="category-detail"
+        options={{
+          presentation: 'modal',
+          headerShown: false,
         }}
       />
     </Stack>

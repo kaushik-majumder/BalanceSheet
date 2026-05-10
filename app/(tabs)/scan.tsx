@@ -27,10 +27,10 @@ import { parseReceiptWithGemini } from '../../lib/geminiParseReceipt';
 import { ParsedReceipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES } from '../../constants/categories';
-import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
+import { TagChip } from '../../components/ui/TagChip';
 import { ItemEditModal } from '../../components/receipt/ItemEditModal';
 
 type ScanState = 'idle' | 'processing' | 'review';
@@ -42,9 +42,13 @@ type ScanState = 'idle' | 'processing' | 'review';
  */
 function pickDominantCategory(items: LineItem[]): Category | null {
   if (!items.length) return null;
+  // Only consider standard categories for picking the receipt's primary
+  // category — custom tags don't belong in the strict Category enum.
+  const standardSet = new Set<string>(ALL_CATEGORIES);
   const spend: Partial<Record<Category, number>> = {};
   for (const item of items) {
-    const c = item.category ?? 'Other';
+    const raw = (item.category ?? 'Other') as string;
+    const c = (standardSet.has(raw) ? raw : 'Other') as Category;
     spend[c] = (spend[c] ?? 0) + Math.abs(item.amount);
   }
   let best: Category = 'Other';
@@ -58,8 +62,8 @@ function pickDominantCategory(items: LineItem[]): Category | null {
   return best;
 }
 
-function uniqueItemCategories(items: LineItem[]): Category[] {
-  const set = new Set<Category>();
+function uniqueItemCategories(items: LineItem[]): string[] {
+  const set = new Set<string>();
   for (const item of items) {
     if (item.category) set.add(item.category);
   }
@@ -574,7 +578,7 @@ export default function ScanScreen() {
               <Text style={styles.lineItemName} numberOfLines={1}>
                 {item.name}
               </Text>
-              {item.category && <Badge category={item.category} size="sm" />}
+              {item.category && <TagChip tag={item.category} size="sm" />}
               <Text style={styles.lineItemAmount}>
                 ${item.amount.toFixed(2)}
               </Text>
@@ -602,6 +606,7 @@ export default function ScanScreen() {
 
       <ItemEditModal
         item={editingItem}
+        extraTags={categoryTags}
         onClose={() => setEditingItem(null)}
         onSave={saveEditedItem}
         onDelete={deleteItem}

@@ -1,5 +1,6 @@
 import { Category, LineItem } from '../types';
 import { ALL_CATEGORIES } from '../constants/categories';
+import { mergeDiscountLines } from './parser';
 
 // Gemini 2.5 Flash with structured-JSON output. Free-tier-friendly and
 // dramatically more robust than regex for messy phone-camera OCR.
@@ -32,7 +33,7 @@ Rules for ITEMS:
 - Strip 8-14 digit UPC/SKU codes from item names.
 - Strip leading numeric item codes (e.g. "1420528 VEGGIES PK 4" → "VEGGIES PK 4").
 - Strip the trailing single-letter tax-status flag (e.g. "H", "J", "D", "E") from item names.
-- Negative amounts (e.g. "$15.00-" or "-15.00") ARE valid items — they represent discounts. Include them with a negative amount, paired with whatever name appears on that receipt row (often a TPD/markdown line that references a previous item).
+- Negative amounts (e.g. "$15.00-" or "-15.00") ARE valid items — they represent discounts/markdowns. Include them as their own line item with a negative amount, paired with the name on that receipt row (often a TPD/markdown reference to a previous item, e.g. "TPD/1993379"). Do NOT pre-merge them into the original item — leave the merging to the downstream code.
 - Do NOT include these as items, they are markers / payment / header noise:
   - SUBTOTAL, TAX, TOTAL, AMOUNT, BALANCE, CHANGE, TENDER lines
   - Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE
@@ -206,6 +207,11 @@ export function parseGeminiPayload(jsonText: string): GeminiParseResult {
     tags = Array.from(seen);
   }
 
+  // Fold any negative discount / markdown lines into the item they
+  // apply to — same merge pass as the regex parser so the rest of the
+  // app (dashboard, drilldown) sees a clean one-row-per-product list.
+  const mergedItems = mergeDiscountLines(items);
+
   return {
     ok: true,
     receipt: {
@@ -214,7 +220,7 @@ export function parseGeminiPayload(jsonText: string): GeminiParseResult {
       subtotalAmount: subtotal ?? undefined,
       taxAmount: tax ?? undefined,
       totalAmount: total ?? 0,
-      lineItems: items,
+      lineItems: mergedItems,
       categoryTags: tags,
     },
   };
