@@ -7,6 +7,11 @@ import {
   setCachedItemClassification,
   updateLineItemCategory,
 } from './database';
+import {
+  getAiClassifyEnabled,
+  getAnthropicApiKey,
+} from './secureStorage';
+import { classifyWithAnthropic } from './anthropicClassify';
 
 /**
  * Classify a single item by name. Layered approach:
@@ -14,14 +19,15 @@ import {
  *   1. SQLite cache hit → return immediately.
  *   2. Local keyword match (synchronous, ~700 hints) → if it lands on
  *      anything other than 'Other', cache as 'local' and return.
- *   3. If a backend URL is configured (`extra.classifyEndpoint` in
- *      app.config.js) and item is still 'Other' → POST to backend, parse
- *      `{ category }` response, cache as 'remote' and return.
- *   4. Otherwise return 'Other' from the local pass.
+ *   3. If AI classify is enabled in Settings AND an Anthropic API key is
+ *      stored in expo-secure-store → call the Anthropic API directly from
+ *      the device (no backend needed).
+ *   4. Else if `extra.classifyEndpoint` is configured → POST to that
+ *      backend (the original Cloudflare-Worker pattern).
+ *   5. Otherwise return 'Other' from the local pass.
  *
- * The backend is opt-in: without `classifyEndpoint`, this function just
- * returns the local result. See `scripts/classify-worker.ts` for a sample
- * Cloudflare Worker implementation that proxies to the Anthropic API.
+ * Both remote layers are opt-in. By default the function returns the
+ * local result and never hits the network.
  */
 export async function classifyItemAsync(name: string): Promise<Category> {
   const cleaned = cleanItemName(name).toLowerCase();
@@ -38,20 +44,37 @@ export async function classifyItemAsync(name: string): Promise<Category> {
     return local;
   }
 
+  // Step 3: direct Anthropic call (preferred when key is set).
+  const aiEnabled = await getAiClassifyEnabled();
+  if (aiEnabled) {
+    const apiKey = await getAnthropicApiKey();
+    if (apiKey) {
+      try {
+        const result = await classifyWithAnthropic(cleaned, apiKey);
+        if (result.ok && isValidCategory(result.category)) {
+          await setCachedItemClassification(cleaned, result.category, 'remote');
+          return result.category;
+        }
+      } catch {
+        // fall through to backend / Other
+      }
+    }
+  }
+
+  // Step 4: optional backend proxy (Cloudflare Worker etc.)
   const endpoint =
     (Constants.expoConfig?.extra as { classifyEndpoint?: string } | undefined)
       ?.classifyEndpoint ?? process.env.EXPO_PUBLIC_CLASSIFY_ENDPOINT;
-  if (!endpoint) return 'Other';
-
-  try {
-    const remote = await fetchRemoteClassification(endpoint, cleaned);
-    if (remote && isValidCategory(remote)) {
-      await setCachedItemClassification(cleaned, remote, 'remote');
-      return remote;
+  if (endpoint) {
+    try {
+      const remote = await fetchRemoteClassification(endpoint, cleaned);
+      if (remote && isValidCategory(remote)) {
+        await setCachedItemClassification(cleaned, remote, 'remote');
+        return remote;
+      }
+    } catch {
+      // network / parse failure — fall through to Other
     }
-  } catch {
-    // Network / parse failure — fall back to Other so the user still gets
-    // a usable receipt; we'll re-try next time the item appears.
   }
   return 'Other';
 }

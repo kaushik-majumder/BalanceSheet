@@ -1,16 +1,105 @@
-import React, { useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../constants/theme';
 import { useAuth } from '../lib/AuthContext';
 import { humanizeAuthError } from '../lib/authErrors';
+import { classifyWithAnthropic } from '../lib/anthropicClassify';
+import {
+  getAiClassifyEnabled,
+  getAnthropicApiKey,
+  setAiClassifyEnabled,
+  setAnthropicApiKey,
+} from '../lib/secureStorage';
 
 export default function SettingsScreen() {
   const { user, profile, provider, biometricEnabled, setBiometricEnabled, signOut, deleteAccount } =
     useAuth();
   const [working, setWorking] = useState(false);
+
+  const [aiEnabled, setAiEnabledState] = useState(false);
+  const [apiKey, setApiKeyState] = useState('');
+  const [keyVisible, setKeyVisible] = useState(false);
+  const [savingKey, setSavingKey] = useState(false);
+  const [testingKey, setTestingKey] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const [stored, enabled] = await Promise.all([
+        getAnthropicApiKey(),
+        getAiClassifyEnabled(),
+      ]);
+      if (!mounted) return;
+      setApiKeyState(stored ?? '');
+      setAiEnabledState(enabled);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const toggleAi = async () => {
+    if (!aiEnabled && !apiKey.trim()) {
+      Alert.alert(
+        'Add your API key first',
+        'Paste an Anthropic API key below, then turn this on.',
+      );
+      return;
+    }
+    const next = !aiEnabled;
+    await setAiClassifyEnabled(next);
+    setAiEnabledState(next);
+  };
+
+  const saveKey = async () => {
+    setSavingKey(true);
+    try {
+      await setAnthropicApiKey(apiKey.trim() || null);
+      Alert.alert(
+        apiKey.trim() ? 'Key saved' : 'Key removed',
+        apiKey.trim()
+          ? 'Stored on this device only. It never appears in the app bundle.'
+          : 'Anthropic key cleared from this device.',
+      );
+    } catch (e) {
+      Alert.alert('Could not save key', (e as Error)?.message ?? 'Try again.');
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  const testKey = async () => {
+    if (!apiKey.trim()) {
+      Alert.alert('Add a key first', 'Paste an Anthropic API key, save it, then test.');
+      return;
+    }
+    setTestingKey(true);
+    try {
+      const result = await classifyWithAnthropic('Organic Whole Milk 2%', apiKey.trim());
+      if (result.ok) {
+        Alert.alert(
+          'Connection works',
+          `Anthropic classified "Organic Whole Milk 2%" as ${result.category}.`,
+        );
+      } else {
+        Alert.alert('Connection failed', result.error);
+      }
+    } finally {
+      setTestingKey(false);
+    }
+  };
 
   const confirmSignOut = () => {
     Alert.alert('Sign out?', 'You will need to sign in again to use the app.', [
@@ -136,6 +225,67 @@ export default function SettingsScreen() {
               color={biometricEnabled ? theme.colors.primary : theme.colors.textMuted}
             />
           </Pressable>
+        </Section>
+
+        <Section title="AI categorization">
+          <Pressable onPress={toggleAi} style={styles.linkRow}>
+            <Text style={styles.linkText}>
+              Use Anthropic for unknown items: {aiEnabled ? 'On' : 'Off'}
+            </Text>
+            <Ionicons
+              name={aiEnabled ? 'toggle' : 'toggle-outline'}
+              size={28}
+              color={aiEnabled ? theme.colors.primary : theme.colors.textMuted}
+            />
+          </Pressable>
+          <View style={styles.keyBlock}>
+            <Text style={styles.keyLabel}>Anthropic API key</Text>
+            <View style={styles.keyRow}>
+              <TextInput
+                value={apiKey}
+                onChangeText={setApiKeyState}
+                placeholder="sk-ant-..."
+                placeholderTextColor={theme.colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry={!keyVisible}
+                style={styles.keyInput}
+              />
+              <Pressable onPress={() => setKeyVisible((v) => !v)} hitSlop={8}>
+                <Ionicons
+                  name={keyVisible ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={theme.colors.textSecondary}
+                  style={{ marginLeft: 8 }}
+                />
+              </Pressable>
+            </View>
+            <View style={styles.keyButtons}>
+              <Pressable
+                onPress={saveKey}
+                disabled={savingKey}
+                style={[styles.keyButton, savingKey && { opacity: 0.5 }]}
+              >
+                <Text style={styles.keyButtonText}>
+                  {savingKey ? 'Saving…' : 'Save key'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={testKey}
+                disabled={testingKey}
+                style={[styles.keyButton, styles.keyButtonGhost, testingKey && { opacity: 0.5 }]}
+              >
+                <Text style={[styles.keyButtonText, styles.keyButtonGhostText]}>
+                  {testingKey ? 'Testing…' : 'Test connection'}
+                </Text>
+              </Pressable>
+            </View>
+            <Text style={styles.keyHelp}>
+              Stored encrypted on this device only — never bundled into the
+              app, never sent anywhere except api.anthropic.com. Get a key at
+              console.anthropic.com → Settings → API Keys.
+            </Text>
+          </View>
         </Section>
 
         <View style={styles.dangerZone}>
@@ -313,5 +463,64 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.sm,
     paddingHorizontal: theme.spacing.md,
     lineHeight: 16,
+  },
+  keyBlock: {
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+  },
+  keyLabel: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.xs,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  keyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  keyInput: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+    color: theme.colors.textPrimary,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    fontSize: theme.font.sm,
+    fontFamily: 'monospace',
+  },
+  keyButtons: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.sm,
+  },
+  keyButton: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.radius.sm,
+    paddingVertical: 10,
+  },
+  keyButtonGhost: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  keyButtonText: {
+    color: '#fff',
+    fontSize: theme.font.sm,
+    fontWeight: '700',
+  },
+  keyButtonGhostText: {
+    color: theme.colors.textPrimary,
+  },
+  keyHelp: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    lineHeight: 16,
+    marginTop: theme.spacing.sm,
   },
 });
