@@ -39,6 +39,31 @@ describe('parseReceiptText - store name extraction', () => {
     expect(parseReceiptText('').storeName).toBe('Unknown Store');
     expect(parseReceiptText('555-1234\n12/05/2026').storeName).toBe('Unknown Store');
   });
+
+  it('skips BOGO promo banners (with OCR mangling) and falls back to known chain', () => {
+    // Real-world: user photographs only the bottom half of a Skechers
+    // receipt. The actual SKECHERS header is cropped out but the
+    // diagonal watermark still bleeds "SKECHERS" into the OCR text.
+    // The first content line is a mangled BOGO banner. The parser
+    // should NOT use the banner as the store name.
+    const text = [
+      '***B0GU D0% 0ff Footwear***',
+      '197627199313 REVOLTED SD - MAVIS- $46.99T',
+      'Subtotal $46.99',
+      'SKECHERS',
+    ].join('\n');
+    expect(parseReceiptText(text).storeName).toMatch(/^skechers$/i);
+  });
+
+  it('skips "50% off" and "Sale" promo lines', () => {
+    const text = [
+      '50% Off Everything',
+      'Sale',
+      'Old Navy',
+      'Total $25.00',
+    ].join('\n');
+    expect(parseReceiptText(text).storeName).toBe('Old Navy');
+  });
 });
 
 describe('parseReceiptText - date extraction', () => {

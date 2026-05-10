@@ -215,6 +215,14 @@ const KNOWN_CHAINS = [
   "Macy's", 'Nordstrom', 'H&M', 'Zara', 'Gap', 'Old Navy', 'Uniqlo',
   'Home Depot', "Lowe's", 'Lowes', 'IKEA',
   'Amazon', 'Sephora', 'Ulta',
+  // Footwear / specialty apparel
+  'Skechers', 'Foot Locker', 'Champs Sports', 'DSW', 'Famous Footwear',
+  "Payless", 'Aldo', 'Nine West', 'Nike', 'Adidas', 'New Balance', 'Puma',
+  'Reebok', 'Crocs', 'Vans', 'Converse', 'Timberland', 'UGG',
+  // Other specialty chains
+  'Sport Chek', 'Canadian Tire', 'Bath & Body Works', 'Victoria',
+  "Bed Bath & Beyond", "Marshalls", 'Winners', 'HomeSense', 'TJ Maxx',
+  'Ross', 'Burlington', 'Dollar Tree', 'Dollarama', 'Costco Wholesale',
 ] as const;
 
 function escapeRe(s: string): string {
@@ -237,6 +245,27 @@ function extractStoreName(lines: string[]): string {
     /^[\d\s\-#]+$/,                                               // only numbers
     /^(option|return|shift|control|command|enter|backspace|delete|tab|space|escape|caps\s*lock)$/i, // keyboard keys
     /^(open|close|save|cancel|edit|done|next|back)$/i,           // generic UI buttons
+    // Promo banner lines — these often appear above (or instead of)
+    // the merchant name when the user crops the photo. They must NOT
+    // become the storeName. We're permissive with OCR mangling:
+    // "BOGU"/"BOGD" for BOGO, "DO%" for 50%, "0ff" for Off.
+    /\*+/,                                                        // any line containing *** wrappers
+    /\bbog[a-z]\b/i,                                              // BOGO / BOGU / BOGD
+    /\b\d{1,2}\s*%\s*o?ff\b/i,                                    // "50% off", "50% Off"
+    /\b[dD0Oo]{1,2}\s*%\s*[o0]ff\b/i,                             // OCR-mangled "DO% 0ff"
+    /\b(sale|special|clearance|discount|promo|promotion|deal)\b/i,
+    /\bbuy\s+\d+\s+get\b/i,                                       // "Buy 1 Get 1"
+    /\bsave\s+\$?\d/i,                                            // "Save $10"
+    /\boff\s+(footwear|apparel|everything|all)\b/i,
+    /\bfree\s+(shipping|delivery|item)\b/i,
+    // Item / totals rows — these always have a dollar price somewhere.
+    // The store name never has a price on the same line, so any line
+    // with a $X.XX or trailing tax-flag price disqualifies it.
+    /\$\s*\d+\.\d{2}/,
+    /\d+\.\d{2}\s*[A-Za-z]?\s*$/,
+    // Lines that start with a long numeric SKU/UPC (Costco / Skechers
+    // / Best Buy item rows). These clearly aren't store-name headers.
+    /^\s*\d{6,}\s+/,
   ];
 
   for (const line of lines.slice(0, 6)) {

@@ -25,9 +25,14 @@ import {
   saveReceipt,
   saveCorrection,
   getRelevantCorrections,
+  getGeminiCachedResponse,
+  setGeminiCachedResponse,
 } from '../../lib/database';
 import { parseReceiptText } from '../../lib/parser';
-import { parseReceiptWithGemini } from '../../lib/geminiParseReceipt';
+import {
+  parseReceiptWithGemini,
+  parseGeminiPayload,
+} from '../../lib/geminiParseReceipt';
 import { ParsedReceipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES } from '../../constants/categories';
@@ -323,6 +328,30 @@ export default function ScanScreen() {
     setRawText('');
   };
 
+  // Apply a Gemini-validated receipt into the form state. Used from
+  // both the live API path and the cache-hit path.
+  const applyAiResult = (
+    ai: import('../../lib/geminiParseReceipt').GeminiReceipt,
+  ) => {
+    setStoreName(ai.storeName);
+    if (ai.date) setDate(format(new Date(ai.date), 'yyyy-MM-dd'));
+    if (ai.totalAmount > 0) setAmount(ai.totalAmount.toFixed(2));
+    if (ai.subtotalAmount != null) setSubtotal(ai.subtotalAmount.toFixed(2));
+    else setSubtotal('');
+    if (ai.taxAmount != null) setTax(ai.taxAmount.toFixed(2));
+    else setTax('');
+    setItems(ai.lineItems);
+    setParserBaseline(ai.lineItems);
+    const dominantCategory = pickDominantCategory(ai.lineItems);
+    if (dominantCategory) setCategory(dominantCategory);
+    if (ai.categoryTags && ai.categoryTags.length > 0) {
+      setCategoryTags(ai.categoryTags);
+    } else {
+      const uniq = uniqueItemCategories(ai.lineItems);
+      if (uniq.length) setCategoryTags(uniq);
+    }
+  };
+
   const runAiParse = async (text: string) => {
     const geminiKey = (Constants.expoConfig?.extra as { geminiApiKey?: string } | undefined)
       ?.geminiApiKey;
@@ -333,6 +362,20 @@ export default function ScanScreen() {
     setAiPending(true);
     setAiError(null);
     try {
+      // Cache hit? Avoid burning another Gemini quota request on a
+      // receipt we already parsed within the last 24 hours. Repeat
+      // scans (testing, OCR retries) used to fail with 429 here.
+      const cached = await getGeminiCachedResponse(text).catch(() => null);
+      if (cached) {
+        const cachedResult = parseGeminiPayload(cached);
+        if (cachedResult.ok) {
+          applyAiResult(cachedResult.receipt);
+          setAiApplied(true);
+          setAiError(null);
+          return;
+        }
+      }
+
       // Pull up to 2 prior user-corrections for whatever store the
       // regex parser thinks this is. Gemini sees these as few-shot
       // examples and tends to mirror their structure, so the more a
@@ -376,31 +419,30 @@ export default function ScanScreen() {
         setAiError({ kind: 'empty', message: 'AI returned no usable data.' });
         return;
       }
-      setStoreName(ai.storeName);
-      if (ai.date) setDate(format(new Date(ai.date), 'yyyy-MM-dd'));
-      if (ai.totalAmount > 0) setAmount(ai.totalAmount.toFixed(2));
-      if (ai.subtotalAmount != null) setSubtotal(ai.subtotalAmount.toFixed(2));
-      else setSubtotal('');
-      if (ai.taxAmount != null) setTax(ai.taxAmount.toFixed(2));
-      else setTax('');
-      setItems(ai.lineItems);
-      // Reset baseline to the AI's output — anything the user changes
-      // from here is a correction worth remembering.
-      setParserBaseline(ai.lineItems);
-      // Update the receipt-level category to the dominant category
-      // among line items (highest summed amount). Falls back to 'Other'.
-      const dominantCategory = pickDominantCategory(ai.lineItems);
-      if (dominantCategory) setCategory(dominantCategory);
-      // Multi-select tags: prefer Gemini's suggested categoryTags
-      // (which can include custom names like "Pet Food"), otherwise
-      // fall back to the unique categories among the items.
-      if (ai.categoryTags && ai.categoryTags.length > 0) {
-        setCategoryTags(ai.categoryTags);
-      } else {
-        const uniq = uniqueItemCategories(ai.lineItems);
-        if (uniq.length) setCategoryTags(uniq);
-      }
+      applyAiResult(ai);
       setAiApplied(true);
+      // Cache the successful response so a re-scan of the same OCR
+      // doesn't burn another quota request. We serialize the validated
+      // shape (not the raw Gemini envelope) so the read path can use
+      // parseGeminiPayload uniformly.
+      setGeminiCachedResponse(
+        text,
+        JSON.stringify({
+          store: ai.storeName,
+          date: ai.date,
+          subtotal: ai.subtotalAmount ?? null,
+          tax: ai.taxAmount ?? null,
+          total: ai.totalAmount,
+          categoryTags: ai.categoryTags,
+          items: ai.lineItems.map((it) => ({
+            name: it.name,
+            amount: it.amount,
+            category: it.category ?? 'Other',
+          })),
+        }),
+      ).catch(() => {
+        // non-fatal — cache is opportunistic
+      });
     } catch (e) {
       setAiError({
         kind: 'unknown',
@@ -420,7 +462,7 @@ export default function ScanScreen() {
     if (!err) return '';
     switch (err.kind) {
       case 'rate-limited':
-        return 'AI is busy right now — using basic parser. Tap to retry.';
+        return 'AI quota reached — using basic parser. Try again in a few minutes or edit items manually.';
       case 'network':
         return 'No internet for AI — using basic parser. Tap to retry.';
       case 'auth':

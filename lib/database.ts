@@ -93,6 +93,70 @@ export async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_corrections_store
       ON receipt_corrections(store_name);
   `);
+
+  // Cache of Gemini parse results keyed by the OCR text hash. Lets
+  // repeat scans of the same receipt (common during testing or when
+  // the user retries after a transient error) reuse the prior result
+  // instead of burning another quota request.
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS gemini_cache (
+      text_hash    TEXT PRIMARY KEY,
+      response_json TEXT NOT NULL,
+      created_at   TEXT NOT NULL
+    );
+  `);
+}
+
+/**
+ * Fast non-cryptographic hash (FNV-1a 32-bit). Good enough to key a
+ * local cache where collisions are statistically irrelevant for the
+ * data sizes we deal with (a few hundred scans over the app's life).
+ */
+function fnv1aHash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+export function hashOcrText(rawOcr: string): string {
+  // Normalize whitespace + case so trivially-different OCR runs of
+  // the same receipt hit the same cache key.
+  const normalized = rawOcr.toLowerCase().replace(/\s+/g, ' ').trim();
+  return fnv1aHash(normalized);
+}
+
+const GEMINI_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+export async function getGeminiCachedResponse(
+  rawOcr: string,
+): Promise<string | null> {
+  const key = hashOcrText(rawOcr);
+  const row = await db.getFirstAsync<{ response_json: string; created_at: string }>(
+    `SELECT response_json, created_at FROM gemini_cache WHERE text_hash=?`,
+    [key],
+  );
+  if (!row) return null;
+  const age = Date.now() - new Date(row.created_at).getTime();
+  if (age > GEMINI_CACHE_TTL_MS) return null;
+  return row.response_json;
+}
+
+export async function setGeminiCachedResponse(
+  rawOcr: string,
+  responseJson: string,
+): Promise<void> {
+  const key = hashOcrText(rawOcr);
+  await db.runAsync(
+    `INSERT INTO gemini_cache (text_hash, response_json, created_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(text_hash) DO UPDATE SET
+       response_json = excluded.response_json,
+       created_at    = excluded.created_at`,
+    [key, responseJson, new Date().toISOString()],
+  );
 }
 
 export async function saveCorrection(input: {
