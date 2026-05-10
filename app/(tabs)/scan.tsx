@@ -149,6 +149,11 @@ export default function ScanScreen() {
         storeName: storeName.trim(),
         date: parsedDate.toISOString(),
         totalAmount: amountVal,
+        // Persist the parsed subtotal and tax so the receipt-detail screen
+        // can render the Subtotal · Tax · Total breakdown. Skip if the
+        // parser couldn't find them or the user typed the total manually.
+        subtotalAmount: parsed?.subtotalAmount,
+        taxAmount: parsed?.taxAmount,
         category,
         rawText: parsed?.rawText,
         imageUri: imageUri ?? undefined,
