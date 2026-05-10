@@ -12,48 +12,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { format, addMonths, subMonths } from 'date-fns';
 import { getReceiptsByMonth, deleteReceipt } from '../../lib/database';
-import { Receipt, MonthlyStats, CategorySummary, Category } from '../../types';
+import { Receipt, MonthlyStats } from '../../types';
 import { theme } from '../../constants/theme';
 import { SpendingChart } from '../../components/dashboard/SpendingChart';
 import { StatsRow } from '../../components/dashboard/StatsRow';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
 import { Card } from '../../components/ui/Card';
-
-function computeStats(receipts: Receipt[]): MonthlyStats {
-  const total = receipts.reduce((s, r) => s + r.totalAmount, 0);
-  const catMap: Partial<Record<Category, { total: number; count: number }>> = {};
-
-  for (const r of receipts) {
-    if (!catMap[r.category]) catMap[r.category] = { total: 0, count: 0 };
-    catMap[r.category]!.total += r.totalAmount;
-    catMap[r.category]!.count += 1;
-  }
-
-  const categories: CategorySummary[] = (
-    Object.entries(catMap) as [Category, { total: number; count: number }][]
-  ).map(([category, { total, count }]) => ({
-    category,
-    total,
-    count,
-    percentage: total > 0 && total > 0 ? (total / (total || 1)) * 100 : 0,
-  }));
-
-  // Recompute percentages relative to grand total
-  categories.forEach((c) => {
-    c.percentage = total > 0 ? (c.total / total) * 100 : 0;
-  });
-
-  categories.sort((a, b) => b.total - a.total);
-  const topCategory = categories[0]?.category ?? null;
-
-  return {
-    totalSpent: total,
-    receiptCount: receipts.length,
-    topCategory,
-    avgPerReceipt: receipts.length > 0 ? total / receipts.length : 0,
-    categories,
-  };
-}
+import { computeStats } from '../../lib/dashboardStats';
 
 export default function DashboardScreen() {
   const [activeMonth, setActiveMonth] = useState(new Date());

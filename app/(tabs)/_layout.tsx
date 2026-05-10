@@ -1,13 +1,10 @@
-import { Tabs, router } from 'expo-router';
+import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, View, StyleSheet } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { theme } from '../../constants/theme';
+import { HeaderProfileButton } from '../../components/ui/HeaderProfileButton';
 
 export default function TabLayout() {
-  const openSettings = () => {
-    router.push('/settings' as never);
-  };
-
   return (
     <Tabs
       screenOptions={{
@@ -27,15 +24,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="grid-outline" size={size} color={color} />
           ),
-          headerRight: () => (
-            <Pressable onPress={openSettings} hitSlop={10} style={{ paddingRight: 16 }}>
-              <Ionicons
-                name="person-circle-outline"
-                size={26}
-                color={theme.colors.textPrimary}
-              />
-            </Pressable>
-          ),
+          headerRight: () => <HeaderProfileButton />,
         }}
       />
       <Tabs.Screen
