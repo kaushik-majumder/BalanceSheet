@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
 import { theme } from '../constants/theme';
@@ -52,6 +53,8 @@ export default function ProfileSetupScreen() {
     }
   };
 
+  const isEditing = !!profile;
+
   const submit = async () => {
     if (!user) return;
     const draft: ProfileDraft = { firstName, lastName, gender, age, photoUri };
@@ -63,6 +66,11 @@ export default function ProfileSetupScreen() {
       setSaving(true);
       const saved = await saveProfile(user.uid, draft, profile);
       setProfile(saved);
+      // When opened from Settings (editing an existing profile), pop
+      // back automatically so the user doesn't get stranded on the
+      // form. On first-time setup the route guard handles the next
+      // step (verify-email / biometric-setup / tabs).
+      if (isEditing && router.canGoBack()) router.back();
     } catch (e) {
       Alert.alert('Could not save profile', (e as Error)?.message ?? 'Please try again.');
     } finally {
@@ -83,13 +91,26 @@ export default function ProfileSetupScreen() {
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
+        {isEditing && (
+          <View style={styles.topBar}>
+            <Pressable
+              onPress={() => router.back()}
+              hitSlop={12}
+              style={styles.backBtn}
+            >
+              <Ionicons name="chevron-back" size={26} color={theme.colors.textPrimary} />
+            </Pressable>
+            <Text style={styles.topBarTitle}>Edit profile</Text>
+            <View style={{ width: 32 }} />
+          </View>
+        )}
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <View style={styles.header}>
-            <Text style={styles.title}>
-              {profile ? 'Edit your profile' : 'Tell us about yourself'}
-            </Text>
+            {!isEditing && (
+              <Text style={styles.title}>Tell us about yourself</Text>
+            )}
             <Text style={styles.subtitle}>
-              {profile
+              {isEditing
                 ? 'Update any of your details below.'
                 : 'Just a few details so we can personalise your experience.'}
             </Text>
@@ -183,20 +204,22 @@ export default function ProfileSetupScreen() {
           </View>
 
           <Button
-            label="Save and continue"
+            label={isEditing ? 'Save changes' : 'Save and continue'}
             onPress={submit}
             loading={saving}
             size="lg"
             style={{ marginTop: theme.spacing.lg }}
           />
 
-          <Pressable
-            onPress={handleSignOut}
-            hitSlop={8}
-            style={{ marginTop: theme.spacing.md, alignSelf: 'center' }}
-          >
-            <Text style={styles.signOut}>Sign out</Text>
-          </Pressable>
+          {!isEditing && (
+            <Pressable
+              onPress={handleSignOut}
+              hitSlop={8}
+              style={{ marginTop: theme.spacing.md, alignSelf: 'center' }}
+            >
+              <Text style={styles.signOut}>Sign out</Text>
+            </Pressable>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -226,6 +249,25 @@ function Field({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: theme.spacing.md,
+    paddingTop: theme.spacing.xs,
+    paddingBottom: theme.spacing.sm,
+  },
+  backBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topBarTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.md,
+    fontWeight: '700',
+  },
   scroll: {
     paddingHorizontal: theme.spacing.lg,
     paddingTop: theme.spacing.lg,

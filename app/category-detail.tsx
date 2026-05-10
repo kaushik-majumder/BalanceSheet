@@ -52,7 +52,7 @@ export default function CategoryDetailScreen() {
   const headerIcon = standard ? CATEGORY_ICONS[category as Category] : '🏷️';
 
   return (
-    <SafeAreaView style={styles.root} edges={['bottom']}>
+    <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={24} color={theme.colors.textPrimary} />
