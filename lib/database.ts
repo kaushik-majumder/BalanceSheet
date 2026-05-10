@@ -63,6 +63,53 @@ export async function initDatabase(): Promise<void> {
       // column already exists
     }
   }
+
+  // Cache for the async classifier — keyed by the cleaned, lowercased item
+  // name. Lets us avoid re-querying the backend for repeat items.
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS item_classifications (
+      cleaned_name TEXT PRIMARY KEY,
+      category     TEXT NOT NULL,
+      source       TEXT NOT NULL,  -- 'local' or 'remote'
+      created_at   TEXT NOT NULL
+    );
+  `);
+}
+
+export async function getCachedItemClassification(
+  cleanedName: string,
+): Promise<{ category: string; source: string } | null> {
+  const row = await db.getFirstAsync<{ category: string; source: string }>(
+    `SELECT category, source FROM item_classifications WHERE cleaned_name=?`,
+    [cleanedName],
+  );
+  return row ?? null;
+}
+
+export async function setCachedItemClassification(
+  cleanedName: string,
+  category: string,
+  source: 'local' | 'remote',
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO item_classifications (cleaned_name, category, source, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(cleaned_name) DO UPDATE SET
+       category   = excluded.category,
+       source     = excluded.source,
+       created_at = excluded.created_at`,
+    [cleanedName, category, source, new Date().toISOString()],
+  );
+}
+
+export async function updateLineItemCategory(
+  itemId: string,
+  category: string,
+): Promise<void> {
+  await db.runAsync(
+    `UPDATE line_items SET category=? WHERE id=?`,
+    [category, itemId],
+  );
 }
 
 export async function deleteAllReceipts(): Promise<void> {

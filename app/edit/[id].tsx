@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import { getReceiptById, updateReceipt, deleteReceipt } from '../../lib/database';
+import { refineUncategorizedItems } from '../../lib/itemClassifier';
 import { Receipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
@@ -67,17 +68,36 @@ export default function EditReceiptScreen() {
 
   useEffect(() => {
     if (!id) return;
-    getReceiptById(id).then((r) => {
-      if (r) {
-        setReceipt(r);
-        setStoreName(r.storeName);
-        setDate(format(new Date(r.date), 'yyyy-MM-dd'));
-        setAmount(r.totalAmount.toFixed(2));
-        setCategory(r.category);
-        setNotes(r.notes ?? '');
+    let mounted = true;
+    (async () => {
+      const r = await getReceiptById(id);
+      if (!mounted || !r) {
+        if (mounted) setLoading(false);
+        return;
       }
+      setReceipt(r);
+      setStoreName(r.storeName);
+      setDate(format(new Date(r.date), 'yyyy-MM-dd'));
+      setAmount(r.totalAmount.toFixed(2));
+      setCategory(r.category);
+      setNotes(r.notes ?? '');
       setLoading(false);
-    });
+
+      // Background refinement — run the async classifier on items still
+      // marked 'Other'. Updates land in the DB; refresh local state on
+      // success so the UI re-renders the new category badges.
+      if (r.lineItems?.length) {
+        try {
+          const refined = await refineUncategorizedItems(r.lineItems);
+          if (mounted) setReceipt({ ...r, lineItems: refined });
+        } catch {
+          // best-effort; ignore
+        }
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, [id]);
 
   const handleSave = async () => {
