@@ -45,18 +45,30 @@ Rules for ITEMS:
 - Strip 8-14 digit UPC/SKU codes from item names.
 - Strip leading numeric item codes (e.g. "1420528 VEGGIES PK 4" → "VEGGIES PK 4").
 - Strip the trailing single-letter tax-status flag (e.g. "H", "J", "D", "E") from item names.
-- Negative amounts (e.g. "$15.00-" or "-15.00") ARE valid items — they represent discounts/markdowns. Include them as their own line item with a negative amount, paired with the name on that receipt row (often a TPD/markdown reference to a previous item, e.g. "TPD/1993379"). Do NOT pre-merge them into the original item — leave the merging to the downstream code.
+- Negative amounts ARE valid items — they represent discounts/markdowns. Recognize ALL of these forms as negative:
+    "$15.00-"   trailing minus (Costco / warehouse chains)
+    "-15.00"    leading minus (generic)
+    "($52.50)"  parentheses (Skechers / accounting-style)
+  Emit them as their own line item with a negative amount, paired with the name on that receipt row (often a TPD/markdown reference like "TPD/1993379", or just "BOGO 50% Off"). Do NOT pre-merge them into the original item — downstream code handles that.
+- Many receipts print one product across MULTIPLE OCR rows: the first row has the NAME and PRICE, and the next few rows have METADATA (style code, size, color, promo banner, "New Price" summary). Treat all metadata rows as belonging to the previous item — do NOT emit a separate item for them. Specifically skip:
+    "Style: 183004BLK"
+    "Size: 8 Color: BLACK"
+    "BOGO 50% Off Footwear" (with or without a $0.00 price beside it)
+    "New Price: $110.00"      — this is a SUMMARY of the post-discount price, not a separate item
+    "You Saved $52.50"        — receipt-level savings summary
+    "Items Sold: N", "Items Returned: N"
+- When a single product has BOTH an original price AND a discount line nearby (e.g. "$104.99T" then "($52.50)"), emit them as TWO line items (one positive, one negative). The downstream merger pairs them. Do NOT collapse to the "New Price" value yourself.
 - Do NOT include these as items, they are markers / payment / header noise:
   - SUBTOTAL, TAX, TOTAL, AMOUNT, BALANCE, CHANGE, TENDER lines
-  - Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE
-  - Bank/EMV codes: RRN, AID, TC, AUTH, REFERENCE, APPROVAL
+  - Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE, Sequence Number, Approval Code, Assoc/Reg/Tran numbers
+  - Bank/EMV codes: RRN, AID, TC, AUTH, REFERENCE, APPROVAL, TVR, TSI, IAD, ARC, ACI, ISO, Application Cryptogram/Preferred Name/Label
   - Costco markers: "Bottom of basket", "BOB Count", "Items Sold: N"
   - Loyalty info: "ZV Member", "Member #", "Membership"
   - Masked card numbers (lines with mostly X's, e.g. "XXXXXXXXXXXX0933")
   - Postal codes / phone numbers / store address lines
   - Tax footnotes like "H = HST G = GST"
-  - Signature / approval status lines
-- For each item, choose the BEST matching category from the allowed list.
+  - Signature / approval status lines, "Verified by PIN"
+- For each item, choose the BEST matching category from the allowed list. Footwear → Clothing, accessories → Clothing, shoe care/polish → Other.
 
 Rules for FIELDS:
 - store: the merchant name, cleaned of OCR garbage characters and casing weirdness.

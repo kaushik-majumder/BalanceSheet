@@ -849,3 +849,74 @@ describe('parseReceiptText - Costco TPD markdown lines', () => {
     expect(r.lineItems.some((i) => i.amount < 0)).toBe(false);
   });
 });
+
+describe('parseReceiptText - Skechers multi-line items with BOGO discount', () => {
+  // Each item spans 3-4 OCR rows: name+price, Style:, Size:Color:, and
+  // optionally BOGO/New Price/discount lines. The parser must extract
+  // exactly 4 items and apply the $52.50 BOGO discount to the
+  // ON-THE-GO FLEX item.
+  const ocr = [
+    'SKECHERS',
+    'OSHAWA SOUTH SMARTCENTERS',
+    '560 LAVAL DRIVE',
+    'UNIT #C0001',
+    'OSHAWA ONTARIO, ON L1J 0B5',
+    'SALE',
+    '***BOGO 50% Off Footwear***',
+    '197627156231 UNO - SUITED ON AIR $110.00T',
+    'Style: 183004BLK',
+    'Size: 8 Color: BLACK',
+    'BOGO 50% Off Footwear $0.00',
+    'New Price: $110.00',
+    '197976255623 ON-THE-GO FLEX - CO $104.99T',
+    'Style: 138215NVW',
+    'Size: 8 Color: NVY/WHT ($52.50)',
+    'BOGO 50% Off Footwear',
+    'New Price: $52.49',
+    '******',
+    '197627199313 REVOLTED SD - MAVIS- $46.99T',
+    'Style: 205166BLK',
+    'Size: 7 Color: BLACK',
+    '192283775864 SHOE CARE GIFT SET - $18.00T',
+    'Style: SK0027AST',
+    'Size: ONE SIZE ONLY Color: ASSORTED',
+    'Subtotal $227.48',
+    'Harmonized Sales Tax 13 % $29.57',
+    'Total $257.05',
+    'You Saved $52.50',
+    'MasterCard $257.05',
+  ].join('\n');
+
+  it('extracts the store name as Skechers', () => {
+    const r = parseReceiptText(ocr);
+    expect(r.storeName).toMatch(/skechers/i);
+  });
+
+  it('does NOT emit Style:, Size:, BOGO, or New Price lines as items', () => {
+    const r = parseReceiptText(ocr);
+    for (const item of r.lineItems) {
+      expect(item.name).not.toMatch(/^style\b/i);
+      expect(item.name).not.toMatch(/^size\b/i);
+      expect(item.name).not.toMatch(/^new\s+price/i);
+      expect(item.name).not.toMatch(/^bogo/i);
+      expect(item.name).not.toMatch(/^you\s+saved/i);
+    }
+  });
+
+  it('treats ($52.50) parenthesized amount as a discount and merges into the previous item', () => {
+    const r = parseReceiptText(ocr);
+    // After discount merging, the ON-THE-GO FLEX line should be $52.49.
+    const flex = r.lineItems.find((i) => /on.the.go\s+flex|flex/i.test(i.name));
+    expect(flex).toBeDefined();
+    expect(flex!.amount).toBeCloseTo(52.49, 1);
+    // No standalone negative lines should leak through.
+    expect(r.lineItems.some((i) => i.amount < 0)).toBe(false);
+  });
+
+  it('captures the $227.48 subtotal and $29.57 HST', () => {
+    const r = parseReceiptText(ocr);
+    expect(r.subtotalAmount).toBeCloseTo(227.48, 2);
+    expect(r.taxAmount).toBeCloseTo(29.57, 2);
+    expect(r.totalAmount).toBeCloseTo(257.05, 2);
+  });
+});

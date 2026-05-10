@@ -422,8 +422,21 @@ const SKIP_LINE_RE = new RegExp(
     '\\bp\\s*\\(?h\\)?\\s*hst\\b',       // tax-rate label "P (H)HST"
     '\\bp\\s*chdhst\\b',                 // OCR variant of P (H)HST
     '\\bitems?\\s+sold\\b',
+    '\\bitems?\\s+returned\\b',
+    '\\byou\\s+saved\\b',                // "You Saved $52.50" (Skechers)
+    '\\bnew\\s+price\\b',                // "New Price: $110.00" — summary, not an item
+    '\\bbogo\\b',                        // "BOGO 50% Off Footwear" promo banner
+    '\\bstyle\\s*:',                     // "Style: 183004BLK" — item metadata
+    '\\b(?:size|color|colour)\\s*:',     // "Size: 8 Color: BLACK" metadata
+    '\\b(?:assoc|reg|tran|seq(?:uence)?)\\s*(?:no|num(?:ber)?|#)?\\s*:?\\s*\\d',
+    '\\b(application\\s+(?:cryptogram|preferred|label)|response\\s+code|arc|tvr|iad|tsi|aci|iso)\\b',
+    '\\bsequence\\s+number\\b',
+    '\\bverified\\s+by\\s+pin\\b',
+    '\\bapproval\\s+code\\b',
+    '^\\s*sale\\s*$',                    // bare "SALE" banner line
     '^\\s*\\*+\\s*$',                    // separator "*****"
     '^\\s*-+\\s*$',                      // separator "------"
+    '^\\s*=+\\s*$',                      // separator "======"
     '^\\s*x{4,}[\\s\\d]*\\d{2,}\\s*$',   // masked card "XXXXXXXXXXXX0933"
     '^\\s*[A-Z]\\d[A-Z]\\s+\\d[A-Z]\\d\\s*$',
     '^\\s*\\d{5}(?:-\\d{4})?\\s*$',
@@ -437,11 +450,17 @@ const SKIP_LINE_RE = new RegExp(
 // etc.). It's printed as uppercase but real OCR routinely returns lowercase
 // for it (the user hit "5.00 d" being treated as a name instead of a
 // price), so we accept either case.
-// Trailing `-` (e.g. "15.00-") is how Costco / many warehouse chains
-// mark a discount/markdown amount. Leading `-` is the more standard
-// notation. Capture either so discount lines parse as negative amounts.
-const PRICE_AT_END_RE = /\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*$/;
-const PRICE_ONLY_RE = /^\s*\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*$/;
+// Negative-amount notations the parser must recognize:
+//   "15.00-"   — Costco / many warehouse chains
+//   "-15.00"   — generic
+//   "($15.00)" — Skechers / accounting-style parentheses
+// We capture the open-paren, leading minus, the number, and trailing
+// minus / status letter / close-paren together so any of these forms
+// produces a negative amount in the consumer.
+const PRICE_AT_END_RE =
+  /(\()?\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*(\))?\s*$/;
+const PRICE_ONLY_RE =
+  /^\s*(\()?\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*(\))?\s*$/;
 const UPC_ONLY_RE = /^\s*\d{8,14}\s*$/;
 const ALPHA_RE = /[a-z]/i;
 
@@ -490,12 +509,35 @@ function extractInlineItems(
 ): LineItem[] {
   const items: LineItem[] = [];
   for (const line of lines) {
-    if (skipRe.test(line)) continue;
+    // Before skipping noise lines, check whether this line buries a
+    // parenthesized DISCOUNT amount inside metadata (e.g. Skechers'
+    // "Size: 8 Color: NVY/WHT ($52.50)" pattern). We emit it as a
+    // standalone negative item so mergeDiscountLines folds it into
+    // the preceding positive item by adjacency.
+    if (skipRe.test(line)) {
+      const parenDiscount = line.match(/\((?:\$)?\s*(\d{1,5}\.\d{2})\s*\)\s*$/);
+      if (parenDiscount) {
+        const mag = parseFloat(parenDiscount[1]);
+        if (Number.isFinite(mag) && mag > 0) {
+          items.push({
+            id: Math.random().toString(36).slice(2, 9),
+            name: 'Discount',
+            amount: -mag,
+            category: 'Other',
+          });
+        }
+      }
+      continue;
+    }
     const priceMatch = line.match(priceRe);
     if (!priceMatch) continue;
-    // priceMatch groups: 1=leading-minus, 2=number, 3=trailing-minus, 4=letter
-    const negative = priceMatch[1] === '-' || priceMatch[3] === '-';
-    const magnitude = parseFloat(priceMatch[2]);
+    // priceMatch groups: 1=open-paren, 2=leading-minus, 3=number,
+    // 4=trailing-minus, 5=letter, 6=close-paren. Any of paren-pair,
+    // leading-minus, or trailing-minus marks the amount as negative.
+    const parenthesized = priceMatch[1] === '(' && priceMatch[6] === ')';
+    const negative =
+      parenthesized || priceMatch[2] === '-' || priceMatch[4] === '-';
+    const magnitude = parseFloat(priceMatch[3]);
     if (!Number.isFinite(magnitude) || magnitude >= 10_000) continue;
     if (magnitude === 0) continue;
     const amount = negative ? -magnitude : magnitude;
@@ -565,6 +607,22 @@ function extractPairedItems(
       // we've passed the items block so we stop buffering footer-style
       // names below.
       if (totalsTriggerRe.test(line)) pastTotalsBlock = true;
+      // Rescue any parenthesized DISCOUNT buried inside this metadata
+      // line (Skechers' "Size: 8 Color: NVY/WHT ($52.50)") — emit it
+      // as a standalone negative item so mergeDiscountLines absorbs
+      // it into the preceding positive item.
+      const parenDiscount = line.match(/\((?:\$)?\s*(\d{1,5}\.\d{2})\s*\)\s*$/);
+      if (parenDiscount && !pastTotalsBlock) {
+        const mag = parseFloat(parenDiscount[1]);
+        if (Number.isFinite(mag) && mag > 0) {
+          items.push({
+            id: Math.random().toString(36).slice(2, 9),
+            name: 'Discount',
+            amount: -mag,
+            category: 'Other',
+          });
+        }
+      }
       continue;
     }
     if (!inItemsBlock) {
@@ -576,9 +634,12 @@ function extractPairedItems(
     // Inline match — emit immediately and don't buffer.
     const inline = line.match(re.priceAtEndRe);
     if (inline) {
-      // Groups: 1=leading-minus, 2=number, 3=trailing-minus, 4=letter.
-      const negative = inline[1] === '-' || inline[3] === '-';
-      const magnitude = parseFloat(inline[2]);
+      // Groups: 1=open-paren, 2=leading-minus, 3=number,
+      // 4=trailing-minus, 5=letter, 6=close-paren.
+      const parenthesized = inline[1] === '(' && inline[6] === ')';
+      const negative =
+        parenthesized || inline[2] === '-' || inline[4] === '-';
+      const magnitude = parseFloat(inline[3]);
       if (!Number.isFinite(magnitude) || magnitude >= 10_000 || magnitude === 0)
         continue;
       const amount = negative ? -magnitude : magnitude;
@@ -608,8 +669,10 @@ function extractPairedItems(
     // Price-only line.
     const priceOnly = line.match(re.priceOnlyRe);
     if (priceOnly) {
-      const negative = priceOnly[1] === '-' || priceOnly[3] === '-';
-      const magnitude = parseFloat(priceOnly[2]);
+      const parenthesized = priceOnly[1] === '(' && priceOnly[6] === ')';
+      const negative =
+        parenthesized || priceOnly[2] === '-' || priceOnly[4] === '-';
+      const magnitude = parseFloat(priceOnly[3]);
       const amount = negative ? -magnitude : magnitude;
       if (
         magnitude > 0 &&
