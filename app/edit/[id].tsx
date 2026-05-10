@@ -8,8 +8,10 @@ import {
   TouchableOpacity,
   Alert,
   Image,
+  Modal,
   Platform,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { format } from 'date-fns';
@@ -59,6 +61,7 @@ export default function EditReceiptScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [showRawText, setShowRawText] = useState(false);
 
   const [storeName, setStoreName] = useState('');
   const [date, setDate] = useState('');
@@ -343,16 +346,10 @@ export default function EditReceiptScreen() {
       )}
 
       {/* Raw OCR text — useful for debugging "why didn't the parser
-          extract anything?" */}
+          extract anything?". Opens a scrollable, share-friendly modal. */}
       {receipt.rawText && (
         <TouchableOpacity
-          onPress={() =>
-            Alert.alert(
-              'Raw OCR text',
-              receipt.rawText ?? '(empty)',
-              [{ text: 'OK' }],
-            )
-          }
+          onPress={() => setShowRawText(true)}
           style={styles.rawTextLink}
         >
           <Ionicons
@@ -365,6 +362,27 @@ export default function EditReceiptScreen() {
           </Text>
         </TouchableOpacity>
       )}
+
+      <Modal
+        visible={showRawText}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowRawText(false)}
+      >
+        <View style={styles.modalRoot}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Raw OCR text</Text>
+            <Pressable onPress={() => setShowRawText(false)} hitSlop={10}>
+              <Ionicons name="close" size={26} color={theme.colors.textPrimary} />
+            </Pressable>
+          </View>
+          <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalContent}>
+            <Text selectable style={styles.modalText}>
+              {receipt.rawText ?? '(empty)'}
+            </Text>
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* Actions */}
       <Button
@@ -532,6 +550,36 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontSize: theme.font.lg,
     fontWeight: '800',
+  },
+  modalRoot: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  modalTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.lg,
+    fontWeight: '700',
+  },
+  modalScroll: {
+    flex: 1,
+  },
+  modalContent: {
+    padding: theme.spacing.lg,
+  },
+  modalText: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    fontFamily: 'monospace',
+    lineHeight: 18,
   },
   rawTextLink: {
     flexDirection: 'row',

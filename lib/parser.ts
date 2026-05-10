@@ -192,37 +192,161 @@ function extractSubtotalAmount(text: string): number | undefined {
 }
 
 function extractLineItems(lines: string[]): LineItem[] {
-  const items: LineItem[] = [];
   // Price at end of line, optionally followed by a trailing single status
   // letter (Walmart 'J'/'D', Costco 'E', etc.).
-  const priceRe = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
+  const priceAtEndRe = /\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
+  // A line that is JUST a price (with optional status letter) — used in
+  // two-column receipts where OCR reads names and prices separately.
+  const priceOnlyRe = /^\s*\$?\s*(\d{1,5}\.\d{2})\s*([A-Z])?\s*$/;
+  // Pure UPC line (only digits, 8-14 long).
+  const upcOnlyRe = /^\s*\d{8,14}\s*$/;
   const skipRe = /\b(total|sub-?total|tax|hst|gst|pst|qst|vat|discount|coupon|savings|change|cash|card|visa|mastercard|amex|debit|credit|balance|tip|gratuity|tend(?:er)?|approval|terminal|store\s*#|tr\s*#|op\s*#|te\s*#|st\s*#)\b/i;
-  // Items must look like real names — at least one alpha character once
-  // numeric noise is stripped.
   const ALPHA_RE = /[a-z]/i;
 
+  // Run both extractors and pick the one that recovered more items.
+  //   - Inline path matches "name + price on the same line" (most receipts)
+  //   - Paired path handles two-column OCR where names and prices come
+  //     out in separate vertical blocks (common when ML Kit splits a
+  //     two-column receipt by column instead of by row)
+  // Picking the larger result means a clean inline receipt isn't penalised,
+  // and a two-column receipt where inline finds 0 falls back gracefully.
+  const inline = extractInlineItems(lines, priceAtEndRe, skipRe, ALPHA_RE);
+  const paired = extractPairedItems(lines, {
+    priceOnlyRe,
+    upcOnlyRe,
+    skipRe,
+    alphaRe: ALPHA_RE,
+    priceAtEndRe,
+  });
+  return (paired.length > inline.length ? paired : inline).slice(0, 50);
+}
+
+function extractInlineItems(
+  lines: string[],
+  priceRe: RegExp,
+  skipRe: RegExp,
+  alphaRe: RegExp,
+): LineItem[] {
+  const items: LineItem[] = [];
   for (const line of lines) {
     if (skipRe.test(line)) continue;
-
     const priceMatch = line.match(priceRe);
     if (!priceMatch) continue;
-
     const amount = parseFloat(priceMatch[1]);
     if (!(amount > 0 && amount < 10_000)) continue;
-
     const rawName = line.replace(priceMatch[0], '').replace(/\s+/g, ' ').trim();
     const name = cleanItemName(rawName);
-    if (!name || !ALPHA_RE.test(name)) continue;
+    if (!name || !alphaRe.test(name)) continue;
     if (name.length < 2) continue;
-
-    const category = categorizeItem(name);
     items.push({
       id: Math.random().toString(36).slice(2, 9),
       name,
       amount,
-      category,
+      category: categorizeItem(name),
+    });
+  }
+  return items;
+}
+
+/**
+ * Two-column-receipt fallback. ML Kit's text recognition often splits a
+ * two-column receipt (item-name column on the left, price column on the
+ * right) into two separate top-to-bottom blocks: first all the names,
+ * then all the prices. Pair them up by position.
+ *
+ * Heuristic:
+ *   - Walk the lines once and bucket each line as 'name' (has alpha,
+ *     no price), 'priceOnly' (just a price), 'inline' (name+price), or
+ *     'noise' (skip).
+ *   - For 'inline' lines we already have items.
+ *   - For the rest, pair the i-th 'name' with the i-th 'priceOnly' line
+ *     that comes AFTER all the names. If the counts mismatch, pair as
+ *     many as we can.
+ */
+function extractPairedItems(
+  lines: string[],
+  re: {
+    priceOnlyRe: RegExp;
+    upcOnlyRe: RegExp;
+    skipRe: RegExp;
+    alphaRe: RegExp;
+    priceAtEndRe: RegExp;
+  },
+): LineItem[] {
+  const items: LineItem[] = [];
+  const pendingNames: string[] = [];
+  const pendingPrices: Array<{ amount: number }> = [];
+
+  // The items block on a typical receipt sits between the header (store,
+  // address, transaction IDs) and the totals (SUBTOTAL, TAX, TOTAL).
+  // Start buffering only once we see the first line that looks like a
+  // receipt item — heuristic: a UPC code embedded somewhere, OR a
+  // weight/quantity prefix like "10LB", "1 OZ", "5KG", "12PK".
+  const itemShapeRe =
+    /\b\d{8,14}\b|^\s*\d+\s*(lb|oz|kg|g|ml|l|pk|pck|ct|count|pack)\b/i;
+  let inItemsBlock = false;
+
+  for (const line of lines) {
+    if (re.skipRe.test(line)) {
+      // Headers like "ST# 03001" hit skipRe before we enter the items
+      // block — just skip them. After we're in the items block, a hit
+      // means we've reached the totals/footer; stop here so we don't
+      // pair stray prices with header noise.
+      if (inItemsBlock) break;
+      continue;
+    }
+    if (!inItemsBlock) {
+      if (!itemShapeRe.test(line)) continue;
+      inItemsBlock = true;
+    }
+    if (re.upcOnlyRe.test(line)) continue;
+
+    // Inline match — emit immediately and don't buffer.
+    const inline = line.match(re.priceAtEndRe);
+    if (inline) {
+      const amount = parseFloat(inline[1]);
+      if (!(amount > 0 && amount < 10_000)) continue;
+      const rawName = line.replace(inline[0], '').replace(/\s+/g, ' ').trim();
+      const name = cleanItemName(rawName);
+      if (name && re.alphaRe.test(name) && name.length >= 2) {
+        items.push({
+          id: Math.random().toString(36).slice(2, 9),
+          name,
+          amount,
+          category: categorizeItem(name),
+        });
+      } else if (name === '' || !re.alphaRe.test(name)) {
+        // The line was JUST a price (no name on the same line) — buffer it.
+        pendingPrices.push({ amount });
+      }
+      continue;
+    }
+
+    // Price-only line.
+    const priceOnly = line.match(re.priceOnlyRe);
+    if (priceOnly) {
+      const amount = parseFloat(priceOnly[1]);
+      if (amount > 0 && amount < 10_000) pendingPrices.push({ amount });
+      continue;
+    }
+
+    // Name-ish line (has at least one letter).
+    const name = cleanItemName(line);
+    if (name && re.alphaRe.test(name) && name.length >= 2) {
+      pendingNames.push(name);
+    }
+  }
+
+  // Pair name[i] with price[i].
+  const pairCount = Math.min(pendingNames.length, pendingPrices.length);
+  for (let i = 0; i < pairCount; i++) {
+    items.push({
+      id: Math.random().toString(36).slice(2, 9),
+      name: pendingNames[i],
+      amount: pendingPrices[i].amount,
+      category: categorizeItem(pendingNames[i]),
     });
   }
 
-  return items.slice(0, 50);
+  return items;
 }

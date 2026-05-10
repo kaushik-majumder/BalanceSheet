@@ -347,3 +347,85 @@ describe('parseReceiptText - Walmart-style receipt with UPCs and HST', () => {
     }
   });
 });
+
+describe('parseReceiptText - two-column OCR (names and prices on separate lines)', () => {
+  // Real OCR output from a phone-camera scan of the same Walmart receipt.
+  // ML Kit returned the left column (item names + UPCs) as one block, then
+  // the right column (prices) as a second block. The parser must pair
+  // name[i] with price[i].
+  const twoColumnOcr = [
+    'Walmart',
+    'STORE 3001',
+    '270 KINGSTON RD ERR# 1',
+    'AJAX, ON',
+    'L1Z 1G1',
+    '905-426-6160',
+    'ST# 03001 OP# 009053 TE# 53',
+    'TR# 01327',
+    '10LB NEOPREN 191730242300',
+    '10LB NEOPREN 191730242300',
+    '5LB RUBBER 191730242350',
+    '5LB RUBBER 191730242350',
+    'AW FRESHMTIC 062338856640',
+    'TB CHC CROIS 770981561170',
+    'YOGA MAT 840737122350',
+    'PR CF DRY TL 841421125960',
+    'CO OPP BB S7 697678203208',
+    'MRKIPCHOC 756781003060',
+    'SHRIMP RING 627735264120',
+    '$14.97 J',
+    '$14.97 J',
+    '$9.98 J',
+    '$9.98 J',
+    '$12.47 J',
+    '$5.98 D',
+    '$21.98 J',
+    '$9.97 J',
+    '$5.00 J',
+    '$3.77 D',
+    '$4.97 J',
+    'SUBTOTAL $114.04',
+    'HST 13.0000% $13.56',
+    'TOTAL $127.60',
+  ].join('\n');
+
+  it('extracts all 11 line items by pairing names with later price lines', () => {
+    const r = parseReceiptText(twoColumnOcr);
+    expect(r.lineItems.length).toBe(11);
+  });
+
+  it('still extracts the grand total ($127.60) from the totals block', () => {
+    expect(parseReceiptText(twoColumnOcr).totalAmount).toBe(127.6);
+  });
+
+  it('still extracts subtotal and tax from the totals block', () => {
+    const r = parseReceiptText(twoColumnOcr);
+    expect(r.subtotalAmount).toBe(114.04);
+    expect(r.taxAmount).toBe(13.56);
+  });
+
+  it('pairs item names with the right prices in order', () => {
+    const items = parseReceiptText(twoColumnOcr).lineItems;
+    expect(items[0].name).toMatch(/neopren/i);
+    expect(items[0].amount).toBe(14.97);
+    expect(items[6]?.name).toMatch(/yoga/i);
+    expect(items[6]?.amount).toBe(21.98);
+    expect(items[10]?.name).toMatch(/shrimp/i);
+    expect(items[10]?.amount).toBe(4.97);
+  });
+
+  it('strips UPC codes from paired names', () => {
+    const items = parseReceiptText(twoColumnOcr).lineItems;
+    for (const item of items) {
+      expect(item.name).not.toMatch(/\d{8,14}/);
+    }
+  });
+
+  it('item subtotals sum to ~ $114.04', () => {
+    const sum = parseReceiptText(twoColumnOcr).lineItems.reduce(
+      (s, i) => s + i.amount,
+      0,
+    );
+    expect(sum).toBeCloseTo(114.04, 2);
+  });
+});
