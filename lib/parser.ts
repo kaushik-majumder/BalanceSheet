@@ -71,7 +71,38 @@ export function parseReceiptText(rawText: string): ParsedReceipt {
   };
 }
 
+/**
+ * Well-known retail / restaurant chains. The names are matched
+ * case-insensitively as whole words against the entire OCR text — not
+ * just the first few lines — so a chain mentioned anywhere on the
+ * receipt wins over keyboard letters, survey copy, addresses, etc.
+ * picked up from a phone-camera background.
+ */
+const KNOWN_CHAINS = [
+  'Walmart', 'Target', 'Costco', 'Whole Foods', "Trader Joe's", 'Trader Joe',
+  'Kroger', 'Safeway', 'Aldi', 'Publix', 'Wegmans', 'Meijer', 'Sprouts',
+  'Sobeys', 'Loblaws', 'Metro', 'No Frills', 'Food Basics', 'Fortinos',
+  "Shoppers Drug Mart", 'Rexall', 'Jean Coutu',
+  'CVS', 'Walgreens', 'Rite Aid',
+  'Best Buy', 'Apple Store', 'Microsoft Store',
+  "McDonald's", 'Starbucks', 'Tim Hortons', 'Subway', 'KFC', 'Pizza Hut',
+  "Domino's", 'Chipotle', 'Burger King', 'Taco Bell', 'Panera',
+  'Shell', 'BP', 'Chevron', 'Exxon', 'Mobil', 'Petro-Canada', 'Esso',
+  "Macy's", 'Nordstrom', 'H&M', 'Zara', 'Gap', 'Old Navy', 'Uniqlo',
+  'Home Depot', "Lowe's", 'Lowes', 'IKEA',
+  'Amazon', 'Sephora', 'Ulta',
+] as const;
+
+function escapeRe(s: string): string {
+  return s.replace(/[.+*?^$()[\]{}|\\]/g, '\\$&');
+}
+
 function extractStoreName(lines: string[]): string {
+  // Heuristic: pick the first non-noise line in the header. skipPatterns
+  // drop phone numbers, addresses, dates, survey copy, URLs, and common
+  // keyboard-key / generic UI words that leak in when the photo
+  // background is a laptop keyboard or app UI (the user hit this with
+  // "option" / "return" / "shift" being captured by ML Kit).
   const skipPatterns = [
     /^\d{3}[-.\s]?\d{3}[-.\s]?\d{4}$/,                          // phone number
     /^\d+\s+\w+.*(st|ave|blvd|rd|dr|ln|way|ct|street|avenue)$/i, // address
@@ -80,13 +111,26 @@ function extractStoreName(lines: string[]): string {
     /^(how did we|complete our|please complete|tell us)/i,        // survey prompts
     /^(www\.|http)/i,
     /^[\d\s\-#]+$/,                                               // only numbers
+    /^(option|return|shift|control|command|enter|backspace|delete|tab|space|escape|caps\s*lock)$/i, // keyboard keys
+    /^(open|close|save|cancel|edit|done|next|back)$/i,           // generic UI buttons
   ];
 
   for (const line of lines.slice(0, 6)) {
     if (line.length < 3) continue;
     if (skipPatterns.some((p) => p.test(line))) continue;
-    return cleanStoreName(line);
+    const cleaned = cleanStoreName(line);
+    if (cleaned !== 'Unknown Store' && cleaned.length >= 3) return cleaned;
   }
+
+  // Fallback: a known chain anywhere in the OCR text. Only used when
+  // the header heuristic above returned nothing usable, so we don't
+  // shorten "CVS Pharmacy" → "CVS" or "Whole Foods Market" → "Whole Foods".
+  const allText = lines.join(' ');
+  for (const chain of KNOWN_CHAINS) {
+    const re = new RegExp(`\\b${escapeRe(chain)}\\b`, 'i');
+    if (re.test(allText)) return chain;
+  }
+
   return 'Unknown Store';
 }
 

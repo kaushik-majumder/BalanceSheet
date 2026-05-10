@@ -279,6 +279,31 @@ describe('parseReceiptText - Walmart-style receipt with UPCs and HST', () => {
     expect(parseReceiptText(noisy).storeName).toBe('Walmart');
   });
 
+  // Real photo from a phone scan included a Mac keyboard background, so
+  // OCR returned "option", "return", "shift" before the receipt text.
+  // The store-name extractor must prefer the chain name over keyboard keys.
+  it('prefers a known chain over keyboard / UI noise lines', () => {
+    const ocr = [
+      'option',
+      'return',
+      'shift',
+      'Walmart',
+      'STORE 3001',
+      '270 KINGSTON RD',
+    ].join('\n');
+    expect(parseReceiptText(ocr).storeName).toBe('Walmart');
+  });
+
+  it('falls back to a non-noise heuristic when no known chain is found', () => {
+    const ocr = [
+      'option',
+      'return',
+      'Acme Corner Store',
+      '123 Some St',
+    ].join('\n');
+    expect(parseReceiptText(ocr).storeName).toBe('Acme Corner Store');
+  });
+
   it('extracts the grand total ($127.60), not the subtotal or tax line', () => {
     expect(parseReceiptText(walmartText).totalAmount).toBe(127.6);
   });
