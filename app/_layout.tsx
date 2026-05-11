@@ -136,7 +136,10 @@ function RootStack() {
         name="edit/[id]"
         options={{
           title: 'Edit Receipt',
-          presentation: 'modal',
+          // Regular stack screen (NOT modal). expo-router can't reliably
+          // navigate from a modal (category-detail, reports) into another
+          // modal — the new screen renders behind the active one. With
+          // edit as a plain stack screen, push() works from anywhere.
           headerStyle: { backgroundColor: theme.colors.surface },
         }}
       />

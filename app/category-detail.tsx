@@ -119,20 +119,7 @@ export default function CategoryDetailScreen() {
           {result.groups.map((g) => (
             <Pressable
               key={g.receiptId}
-              onPress={() => {
-                // Modal-on-modal navigation in expo-router is buggy:
-                // router.push() renders the new modal behind the
-                // current one, and router.replace() can silently
-                // no-op. Explicitly dismiss this modal first, then
-                // push the receipt detail modal after a short delay
-                // so the dismiss animation completes before the new
-                // modal mounts.
-                const id = g.receiptId;
-                router.back();
-                setTimeout(() => {
-                  router.push(`/edit/${id}` as never);
-                }, 220);
-              }}
+              onPress={() => router.push(`/edit/${g.receiptId}` as never)}
               style={({ pressed }) => [
                 styles.groupCard,
                 pressed && { backgroundColor: theme.colors.surfaceHigh },

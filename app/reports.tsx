@@ -399,13 +399,11 @@ export default function ReportsScreen() {
                     styles.standoutCard,
                     pressed && styles.rowPressed,
                   ]}
-                  onPress={() => {
-                    const id = summary.biggestReceipt!.receiptId;
-                    router.back();
-                    setTimeout(() => {
-                      router.push(`/edit/${id}` as never);
-                    }, 220);
-                  }}
+                  onPress={() =>
+                    router.push(
+                      `/edit/${summary.biggestReceipt!.receiptId}` as never,
+                    )
+                  }
                 >
                   <Text style={styles.standoutLabel}>Biggest receipt</Text>
                   <Text style={styles.standoutAmount}>
@@ -427,13 +425,11 @@ export default function ReportsScreen() {
                     styles.standoutCard,
                     pressed && styles.rowPressed,
                   ]}
-                  onPress={() => {
-                    const id = summary.biggestItem!.receiptId;
-                    router.back();
-                    setTimeout(() => {
-                      router.push(`/edit/${id}` as never);
-                    }, 220);
-                  }}
+                  onPress={() =>
+                    router.push(
+                      `/edit/${summary.biggestItem!.receiptId}` as never,
+                    )
+                  }
                 >
                   <Text style={styles.standoutLabel}>Biggest single item</Text>
                   <Text style={styles.standoutAmount}>
