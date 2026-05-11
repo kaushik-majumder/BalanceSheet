@@ -15,7 +15,10 @@ import { format } from 'date-fns';
 import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
+// expo-sharing was added in this branch. The existing preview APK
+// doesn't have the native side linked, so a top-level import could
+// crash the screen on open. Load it lazily inside the export handler
+// instead — only paid for when the user actually taps the share icon.
 import { theme } from '../constants/theme';
 import {
   ALL_CATEGORIES,
@@ -156,8 +159,18 @@ export default function ReportsScreen() {
       await FileSystem.writeAsStringAsync(path, csv, {
         encoding: FileSystem.EncodingType.UTF8,
       });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
+      // Lazy-require expo-sharing — see import comment.
+      let Sharing: typeof import('expo-sharing') | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+        Sharing = require('expo-sharing');
+      } catch {
+        Sharing = null;
+      }
+      const canShare = Sharing
+        ? await Sharing.isAvailableAsync().catch(() => false)
+        : false;
+      if (Sharing && canShare) {
         await Sharing.shareAsync(path, {
           mimeType: 'text/csv',
           dialogTitle: 'Export receipts CSV',
@@ -166,7 +179,7 @@ export default function ReportsScreen() {
       } else {
         Alert.alert(
           'Saved',
-          `Sharing isn't available on this device, but the CSV was written to ${path}.`,
+          `Sharing isn't available in this build, but the CSV was written to ${path}. Rebuild the app to enable in-app share.`,
         );
       }
     } catch (e) {
