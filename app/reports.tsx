@@ -24,6 +24,7 @@ import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Skeleton } from '../components/ui/Skeleton';
 import { HorizontalBar, VerticalBar } from '../components/ui/AnimatedBar';
+import { ModalHeader } from '../components/ui/ModalHeader';
 import {
   ALL_CATEGORIES,
   CATEGORY_ICONS,
@@ -216,24 +217,18 @@ function ReportsScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn}>
-          <Ionicons name="chevron-back" size={24} color={theme.colors.textPrimary} />
-        </Pressable>
-        <Text style={styles.headerTitle}>Reports</Text>
-        <Pressable
-          onPress={exportCsv}
-          disabled={exporting || receipts.length === 0}
-          hitSlop={10}
-          style={[styles.iconBtn, (exporting || receipts.length === 0) && { opacity: 0.4 }]}
-        >
-          {exporting ? (
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-          ) : (
-            <Ionicons name="share-outline" size={22} color={theme.colors.textPrimary} />
-          )}
-        </Pressable>
-      </View>
+      <ModalHeader
+        title="Reports"
+        rightActions={[
+          {
+            icon: 'share-outline',
+            onPress: exportCsv,
+            disabled: receipts.length === 0,
+            loading: exporting,
+            accessibilityLabel: 'Export receipts as CSV',
+          },
+        ]}
+      />
 
       {loading ? (
         <View style={styles.content}>

@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
+import { ModalHeader } from '../components/ui/ModalHeader';
 import { Theme, useStyles, useTheme } from '../constants/theme';
 import { useAuth } from '../lib/AuthContext';
 import {
@@ -92,19 +93,7 @@ export default function ProfileSetupScreen() {
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {isEditing && (
-          <View style={styles.topBar}>
-            <Pressable
-              onPress={() => router.back()}
-              hitSlop={12}
-              style={styles.backBtn}
-            >
-              <Ionicons name="chevron-back" size={26} color={theme.colors.textPrimary} />
-            </Pressable>
-            <Text style={styles.topBarTitle}>Edit profile</Text>
-            <View style={{ width: 32 }} />
-          </View>
-        )}
+        {isEditing && <ModalHeader title="Edit profile" />}
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <View style={styles.header}>
             {!isEditing && (

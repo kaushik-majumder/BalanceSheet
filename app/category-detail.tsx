@@ -20,6 +20,7 @@ import { format as formatDate } from 'date-fns';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ReceiptListSkeleton, Skeleton } from '../components/ui/Skeleton';
+import { ModalHeader } from '../components/ui/ModalHeader';
 import {
   buildCategoryDrilldown,
   CategoryDrilldownResult,
@@ -241,16 +242,11 @@ function CategoryDetailScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={24} color={theme.colors.textPrimary} />
-        </Pressable>
-        <View style={styles.headerInfo}>
-          <Text style={styles.titleEmoji}>{headerIcon}</Text>
-          <Text style={[styles.title, { color: accent }]}>{category}</Text>
-        </View>
-        <View style={{ width: 32 }} />
-      </View>
+      <ModalHeader
+        title={category}
+        iconLeading={headerIcon}
+        titleColor={accent}
+      />
 
       {loading ? (
         <View style={styles.content}>
