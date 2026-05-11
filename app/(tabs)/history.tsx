@@ -16,6 +16,7 @@ import { useStyles, useTheme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { ReceiptListSkeleton } from '../../components/ui/Skeleton';
 import { receiptMatchesCategory } from '../../lib/receiptFilter';
 
 const FILTER_ALL = 'All' as const;
@@ -125,6 +126,7 @@ export default function HistoryScreen() {
   }, [params.category]);
 
   const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const load = useCallback(async () => {
     const data = await getAllReceipts();
@@ -147,7 +149,10 @@ export default function HistoryScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      load();
+      (async () => {
+        await load();
+        setInitialLoading(false);
+      })();
     }, [load]),
   );
 
@@ -250,38 +255,46 @@ export default function HistoryScreen() {
         </View>
       )}
 
-      {/* Receipt list */}
-      <FlatList
-        data={filtered}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <ReceiptCard receipt={item} onDelete={handleDelete} />
-        )}
-        contentContainerStyle={styles.listContent}
-        ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={theme.colors.primary}
-          />
-        }
-        ListEmptyComponent={
-          query ? (
-            <EmptyState
-              icon="search-outline"
-              title="No receipts found"
-              description={`No receipts match "${query}". Try a different search term or clear the search to see everything.`}
+      {/* Receipt list — show skeleton placeholders during the first
+          load so the user sees the expected layout instead of the
+          empty state flashing for a fraction of a second. */}
+      {initialLoading ? (
+        <View style={styles.listContent}>
+          <ReceiptListSkeleton count={5} />
+        </View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <ReceiptCard receipt={item} onDelete={handleDelete} />
+          )}
+          contentContainerStyle={styles.listContent}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.primary}
             />
-          ) : (
-            <EmptyState
-              icon="receipt-outline"
-              title="No receipts yet"
-              description="Scan your first receipt with the camera tab and it'll show up here, grouped by category and date."
-            />
-          )
-        }
-      />
+          }
+          ListEmptyComponent={
+            query ? (
+              <EmptyState
+                icon="search-outline"
+                title="No receipts found"
+                description={`No receipts match "${query}". Try a different search term or clear the search to see everything.`}
+              />
+            ) : (
+              <EmptyState
+                icon="receipt-outline"
+                title="No receipts yet"
+                description="Scan your first receipt with the camera tab and it'll show up here, grouped by category and date."
+              />
+            )
+          }
+        />
+      )}
     </View>
   );
 }

@@ -19,6 +19,7 @@ import { getAllReceipts, getReceiptsByMonth } from '../lib/database';
 import { format as formatDate } from 'date-fns';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import { EmptyState } from '../components/ui/EmptyState';
+import { ReceiptListSkeleton, Skeleton } from '../components/ui/Skeleton';
 import {
   buildCategoryDrilldown,
   CategoryDrilldownResult,
@@ -252,8 +253,9 @@ function CategoryDetailScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.colors.primary} />
+        <View style={styles.content}>
+          <Skeleton width={'100%' as `${number}%`} height={92} borderRadius={16} />
+          <ReceiptListSkeleton count={3} />
         </View>
       ) : !result || result.groups.length === 0 ? (
         <EmptyState

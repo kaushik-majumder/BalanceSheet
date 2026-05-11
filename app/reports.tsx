@@ -22,6 +22,7 @@ import { useStyles, useTheme } from '../constants/theme';
 import { DatePickerModal } from '../components/ui/DatePickerModal';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import { EmptyState } from '../components/ui/EmptyState';
+import { Skeleton } from '../components/ui/Skeleton';
 import {
   ALL_CATEGORIES,
   CATEGORY_ICONS,
@@ -234,8 +235,13 @@ function ReportsScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.colors.primary} />
+        <View style={styles.content}>
+          {/* Match the eventual layout: range chips strip + hero
+              card + trend chart placeholder + sections. */}
+          <Skeleton width={'100%' as `${number}%`} height={34} borderRadius={999} />
+          <Skeleton width={'100%' as `${number}%`} height={160} borderRadius={16} />
+          <Skeleton width={'100%' as `${number}%`} height={170} borderRadius={16} />
+          <Skeleton width={'100%' as `${number}%`} height={150} borderRadius={16} />
         </View>
       ) : (
         <ScrollView
