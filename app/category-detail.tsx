@@ -119,7 +119,15 @@ export default function CategoryDetailScreen() {
           {result.groups.map((g) => (
             <Pressable
               key={g.receiptId}
-              onPress={() => router.push(`/edit/${g.receiptId}` as never)}
+              onPress={() => {
+                // Dismiss this modal first, then push the receipt
+                // detail modal. expo-router renders modal-on-modal
+                // pushes BEHIND the active one, which makes the tap
+                // look broken — replacing the modal in place avoids
+                // that. The receipt detail screen has its own back
+                // button which lands the user on the dashboard.
+                router.replace(`/edit/${g.receiptId}` as never);
+              }}
               style={({ pressed }) => [
                 styles.groupCard,
                 pressed && { backgroundColor: theme.colors.surfaceHigh },
