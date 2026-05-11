@@ -116,6 +116,15 @@ function EditReceiptScreen() {
   // selected, taps toggle selection and a bottom action bar appears.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkCategoryPicker, setShowBulkCategoryPicker] = useState(false);
+  // Track the custom-tag input shown inside the bulk picker so users
+  // can add a brand new tag (e.g. "Garden Supplies") without leaving
+  // the sheet. Submitting applies the tag immediately AND adds it to
+  // the receipt-level categoryTags list via applyBulkCategory.
+  // CRITICAL: this useState MUST live with the other hooks at the top
+  // of the component, NOT after the early returns below. React will
+  // throw "Rendered more hooks than during the previous render" if
+  // any hook is conditionally called.
+  const [bulkCustomTag, setBulkCustomTag] = useState('');
   const selectionMode = selectedIds.size > 0;
 
   useEffect(() => {
@@ -255,11 +264,6 @@ function EditReceiptScreen() {
     });
   };
 
-  // Track the custom-tag input shown inside the bulk picker so users
-  // can add a brand new tag (e.g. "Garden Supplies") without leaving
-  // the sheet. Submitting applies the tag immediately AND adds it to
-  // the receipt-level categoryTags list via applyBulkCategory.
-  const [bulkCustomTag, setBulkCustomTag] = useState('');
   const submitBulkCustomTag = () => {
     const trimmed = bulkCustomTag.trim().slice(0, 32);
     if (!trimmed) return;
