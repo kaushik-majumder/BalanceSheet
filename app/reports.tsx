@@ -20,6 +20,7 @@ import * as FileSystem from 'expo-file-system';
 // instead — only paid for when the user actually taps the share icon.
 import { theme } from '../constants/theme';
 import { DatePickerModal } from '../components/ui/DatePickerModal';
+import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import {
   ALL_CATEGORIES,
   CATEGORY_ICONS,
@@ -68,7 +69,15 @@ function rangeForPreset(preset: Exclude<PresetKey, 'custom'>): {
   };
 }
 
-export default function ReportsScreen() {
+export default function ReportsScreenWrapped() {
+  return (
+    <ErrorBoundary>
+      <ReportsScreen />
+    </ErrorBoundary>
+  );
+}
+
+function ReportsScreen() {
   const [preset, setPreset] = useState<PresetKey>('this');
   const initial = rangeForPreset('this');
   const [start, setStart] = useState<Date>(initial.start);

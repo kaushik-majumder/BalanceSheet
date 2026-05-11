@@ -31,6 +31,7 @@ import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
 import { TagChip } from '../../components/ui/TagChip';
+import { ErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { ItemEditModal } from '../../components/receipt/ItemEditModal';
 
 type CategoryGroup = {
@@ -85,7 +86,15 @@ function groupItemsByCategory(
     .sort((a, b) => b.subtotal - a.subtotal);
 }
 
-export default function EditReceiptScreen() {
+export default function EditReceiptScreenWrapped() {
+  return (
+    <ErrorBoundary>
+      <EditReceiptScreen />
+    </ErrorBoundary>
+  );
+}
+
+function EditReceiptScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 

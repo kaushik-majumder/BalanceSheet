@@ -16,12 +16,21 @@ import { theme } from '../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../constants/categories';
 import { getAllReceipts, getReceiptsByMonth } from '../lib/database';
 import { format as formatDate } from 'date-fns';
+import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import {
   buildCategoryDrilldown,
   CategoryDrilldownResult,
 } from '../lib/categoryDrilldown';
 
-export default function CategoryDetailScreen() {
+export default function CategoryDetailScreenWrapped() {
+  return (
+    <ErrorBoundary>
+      <CategoryDetailScreen />
+    </ErrorBoundary>
+  );
+}
+
+function CategoryDetailScreen() {
   const params = useLocalSearchParams<{
     category?: string;
     year?: string;
