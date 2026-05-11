@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Category, CategorySummary } from '../../types';
 import { useStyles, useTheme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
+import { HorizontalBar } from '../ui/AnimatedBar';
 
 interface Props {
   data: CategorySummary[];
@@ -125,14 +126,7 @@ export function SpendingChart({ data, onCategoryPress }: Props) {
                 />
               )}
             </View>
-            <View style={styles.barTrack}>
-              <View
-                style={[
-                  styles.barFill,
-                  { width: `${barWidth}%` as `${number}%`, backgroundColor: color },
-                ]}
-              />
-            </View>
+            <HorizontalBar percent={barWidth} color={color} />
             <Text style={styles.percent}>{item.percentage.toFixed(0)}%</Text>
           </>
         );

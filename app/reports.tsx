@@ -23,6 +23,7 @@ import { DatePickerModal } from '../components/ui/DatePickerModal';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Skeleton } from '../components/ui/Skeleton';
+import { HorizontalBar, VerticalBar } from '../components/ui/AnimatedBar';
 import {
   ALL_CATEGORIES,
   CATEGORY_ICONS,
@@ -675,19 +676,11 @@ function TrendChart({
               pressed && { opacity: 0.7 },
             ]}
           >
-            <View style={styles.trendBarTrack}>
-              <View
-                style={[
-                  styles.trendBarFill,
-                  {
-                    height: `${heightPct}%` as `${number}%`,
-                    backgroundColor: isActive
-                      ? theme.colors.primary
-                      : theme.colors.primaryFaint,
-                  },
-                ]}
-              />
-            </View>
+            <VerticalBar
+              percent={heightPct}
+              color={isActive ? theme.colors.primary : theme.colors.primaryFaint}
+              trackHeight={90}
+            />
             <Text style={styles.trendBarLabel}>{b.shortLabel}</Text>
             <Text
               style={[
@@ -736,17 +729,7 @@ function CategorySparkline({
         const h = max > 0 ? (p.total / max) * 100 : 0;
         return (
           <View key={`${p.shortLabel}-${idx}`} style={styles.sparkCol}>
-            <View style={styles.sparkBarTrack}>
-              <View
-                style={[
-                  styles.sparkBarFill,
-                  {
-                    height: `${h}%` as `${number}%`,
-                    backgroundColor: color,
-                  },
-                ]}
-              />
-            </View>
+            <VerticalBar percent={h} color={color} trackHeight={26} />
             <Text style={styles.sparkLabel}>{p.shortLabel}</Text>
           </View>
         );
