@@ -23,18 +23,10 @@ import {
 } from '../constants/categories';
 import { getAllReceipts } from '../lib/database';
 import { parseYmdLocal } from '../lib/parser';
-// Native date picker is a native dependency (added in this commit).
-// Existing OTA-only installs DON'T have it linked yet — they'd crash
-// on import. Resolve it dynamically so the screen still works as an
-// OTA: when the module is present, use the platform-native picker;
-// when it isn't, fall back to a text-input pair (defined below).
-let DateTimePicker: any = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
-  DateTimePicker = require('@react-native-community/datetimepicker').default;
-} catch {
-  DateTimePicker = null;
-}
+// Custom date range uses a YYYY-MM-DD TextInput pair below. A
+// platform-native date wheel would be nicer, but that requires a
+// native module which would need a fresh EAS build to ship. Sticking
+// with text inputs keeps Reports fully OTA-updateable.
 import {
   CategoryTrend,
   MonthBucket,
@@ -83,12 +75,6 @@ export default function ReportsScreen() {
   const [end, setEnd] = useState<Date>(initial.end);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Native picker visibility — Android shows them inline as system
-  // dialogs that close themselves; iOS keeps them inline so we
-  // toggle visibility manually.
-  const [showStartPicker, setShowStartPicker] = useState(false);
-  const [showEndPicker, setShowEndPicker] = useState(false);
 
   const selectPreset = (key: PresetKey) => {
     setPreset(key);
@@ -248,76 +234,9 @@ export default function ReportsScreen() {
             })}
           </View>
 
-          {/* Custom range pickers — only shown when preset === 'custom'.
-              Tap a chip to open the platform date picker. */}
+          {/* Custom range — TextInput pair for YYYY-MM-DD entry */}
           {preset === 'custom' && (
-            <View style={styles.customRangeRow}>
-              <TouchableOpacity
-                onPress={() => setShowStartPicker(true)}
-                style={styles.dateChip}
-              >
-                <Ionicons
-                  name="calendar-outline"
-                  size={14}
-                  color={theme.colors.textSecondary}
-                />
-                <Text style={styles.dateChipText}>
-                  {format(start, 'MMM d, yyyy')}
-                </Text>
-              </TouchableOpacity>
-              <Text style={styles.rangeDash}>→</Text>
-              <TouchableOpacity
-                onPress={() => setShowEndPicker(true)}
-                style={styles.dateChip}
-              >
-                <Ionicons
-                  name="calendar-outline"
-                  size={14}
-                  color={theme.colors.textSecondary}
-                />
-                <Text style={styles.dateChipText}>
-                  {format(end, 'MMM d, yyyy')}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Range label so the user always sees the period in plain English */}
-          <Text style={styles.rangeLabel}>
-            {format(start, 'MMM d, yyyy')} — {format(end, 'MMM d, yyyy')}
-          </Text>
-
-          {DateTimePicker && showStartPicker && (
-            <DateTimePicker
-              value={start}
-              mode="date"
-              display="default"
-              maximumDate={end}
-              onChange={(_event: unknown, picked?: Date) => {
-                setShowStartPicker(false);
-                if (picked) setStart(picked);
-              }}
-            />
-          )}
-          {DateTimePicker && showEndPicker && (
-            <DateTimePicker
-              value={end}
-              mode="date"
-              display="default"
-              minimumDate={start}
-              maximumDate={new Date()}
-              onChange={(_event: unknown, picked?: Date) => {
-                setShowEndPicker(false);
-                if (picked) setEnd(picked);
-              }}
-            />
-          )}
-
-          {/* Fallback when the native picker module isn't linked
-              (i.e. on the existing preview APK before its rebuild).
-              The user can type YYYY-MM-DD manually instead. */}
-          {!DateTimePicker && preset === 'custom' && (
-            <ManualDateRangeFallback
+            <ManualDateRange
               start={start}
               end={end}
               onChange={(s, e) => {
@@ -326,6 +245,11 @@ export default function ReportsScreen() {
               }}
             />
           )}
+
+          {/* Range label so the user always sees the period in plain English */}
+          <Text style={styles.rangeLabel}>
+            {format(start, 'MMM d, yyyy')} — {format(end, 'MMM d, yyyy')}
+          </Text>
 
           {/* Hero — period total + delta vs preceding window */}
           <SummaryCard delta={periodDelta} />
@@ -681,11 +605,10 @@ function TrendChart({
   );
 }
 
-/** Type-in-YYYY-MM-DD fallback used when the native date picker
- *  module isn't linked. Each input commits on blur — invalid strings
- *  are silently ignored so the user can keep typing without losing
- *  their place. */
-function ManualDateRangeFallback({
+/** YYYY-MM-DD TextInput pair for the Custom preset. Each input
+ *  commits on blur — invalid strings are silently ignored so the
+ *  user can keep typing without losing their place. */
+function ManualDateRange({
   start,
   end,
   onChange,
@@ -698,10 +621,7 @@ function ManualDateRangeFallback({
   const [endText, setEndText] = useState(format(end, 'yyyy-MM-dd'));
   return (
     <View>
-      <Text style={styles.manualHint}>
-        Type dates as YYYY-MM-DD. (Native picker activates on next app
-        rebuild.)
-      </Text>
+      <Text style={styles.manualHint}>Type dates as YYYY-MM-DD.</Text>
       <View style={styles.manualRow}>
         <TextInput
           value={startText}
