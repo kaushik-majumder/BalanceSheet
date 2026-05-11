@@ -6,6 +6,7 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -123,10 +124,26 @@ export default function HistoryScreen() {
     }
   }, [params.category]);
 
+  const [refreshing, setRefreshing] = useState(false);
+
   const load = useCallback(async () => {
     const data = await getAllReceipts();
     setReceipts(data);
   }, []);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      if (query.trim()) {
+        const results = await searchReceipts(query.trim());
+        setReceipts(results);
+      } else {
+        await load();
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, [query, load]);
 
   useFocusEffect(
     useCallback(() => {
@@ -242,6 +259,13 @@ export default function HistoryScreen() {
         )}
         contentContainerStyle={styles.listContent}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+          />
+        }
         ListEmptyComponent={
           query ? (
             <EmptyState

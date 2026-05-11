@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -201,23 +202,36 @@ function CategoryDetailScreen() {
 
   const [result, setResult] = useState<CategoryDrilldownResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const reload = useCallback(async () => {
+    const receipts = scoped
+      ? await getReceiptsByMonth(yearNum!, monthNum!)
+      : await getAllReceipts();
+    setResult(buildCategoryDrilldown(receipts, category));
+  }, [category, yearNum, monthNum, scoped]);
 
   useFocusEffect(
     useCallback(() => {
       let mounted = true;
       (async () => {
-        const receipts = scoped
-          ? await getReceiptsByMonth(yearNum!, monthNum!)
-          : await getAllReceipts();
-        if (!mounted) return;
-        setResult(buildCategoryDrilldown(receipts, category));
-        setLoading(false);
+        await reload();
+        if (mounted) setLoading(false);
       })();
       return () => {
         mounted = false;
       };
-    }, [category, yearNum, monthNum, scoped]),
+    }, [reload]),
   );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await reload();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [reload]);
 
   const accent = standard
     ? theme.colors.category[category as Category]
@@ -253,7 +267,16 @@ function CategoryDetailScreen() {
           tint={accent}
         />
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.primary}
+            />
+          }
+        >
           <View style={[styles.heroCard, { borderColor: accent }]}>
             <Text style={styles.heroLabel}>
               {monthLabel

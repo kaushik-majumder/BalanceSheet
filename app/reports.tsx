@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TouchableOpacity,
@@ -113,6 +114,17 @@ function ReportsScreen() {
       };
     }, []),
   );
+
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const all = await getAllReceipts();
+      setReceipts(all);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   // Anchor month for trend chart + category trends: use the END of
   // the selected range so the chart shows the most-recent context.
@@ -226,7 +238,16 @@ function ReportsScreen() {
           <ActivityIndicator color={theme.colors.primary} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.primary}
+            />
+          }
+        >
           {/* Range presets — tap a chip to scope everything below */}
           <View style={styles.presetRow}>
             {(
