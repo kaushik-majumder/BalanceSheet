@@ -62,7 +62,7 @@ jobs:
       - name: Install EAS CLI
         run: npm install -g eas-cli@latest
 
-      - name: Write google-services.json
+      - name: Stage google-services.json into the runner's git index
         env:
           GOOGLE_SERVICES_JSON_CONTENT: ${{ secrets.GOOGLE_SERVICES_JSON_CONTENT }}
         run: |
@@ -73,7 +73,14 @@ jobs:
           printf '%s' "$GOOGLE_SERVICES_JSON_CONTENT" > google-services.json
           # Sanity check it's valid JSON before handing to Gradle
           node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8'))"
-          echo "google-services.json written ($(wc -c < google-services.json) bytes)"
+          # `eas build --local` tars only git-tracked files, so write the
+          # secret-materialised file into the runner's local commit. Force
+          # past .gitignore and never push.
+          git config user.email "ci@github.local"
+          git config user.name "GitHub Actions"
+          git add -f google-services.json
+          git -c commit.gpgsign=false commit -m "ci: inline google-services.json (runner-only, do not push)"
+          echo "google-services.json staged ($(wc -c < google-services.json) bytes)"
 
       - name: Determine profile
         id: profile
