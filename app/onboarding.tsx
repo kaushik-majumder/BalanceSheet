@@ -5,7 +5,6 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   Pressable,
-  StyleSheet,
   Text,
   View,
   ViewToken,
@@ -15,15 +14,17 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Button } from '../components/ui/Button';
-import { theme } from '../constants/theme';
+import { Theme, useStyles, useTheme } from '../constants/theme';
 import { useAuth } from '../lib/AuthContext';
+
+type AccentKey = 'primary' | 'info' | 'warning' | 'primaryLight';
 
 type Slide = {
   key: string;
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   body: string;
-  accent: string;
+  accent: AccentKey;
 };
 
 const SLIDES: Slide[] = [
@@ -32,28 +33,28 @@ const SLIDES: Slide[] = [
     icon: 'scan-outline',
     title: 'Snap any receipt in seconds.',
     body: "Point, shoot, done. We'll read every line so you don't have to type a thing.",
-    accent: theme.colors.primary,
+    accent: 'primary',
   },
   {
     key: 'organize',
     icon: 'pricetags-outline',
     title: 'Your spending, automatically sorted.',
     body: 'Groceries, fuel, dining, bills — every receipt lands in the right bucket the moment you scan it.',
-    accent: theme.colors.info,
+    accent: 'info',
   },
   {
     key: 'understand',
     icon: 'stats-chart-outline',
     title: 'See where your money actually goes.',
     body: 'Clean charts and trends so you spot the leaks before payday.',
-    accent: theme.colors.warning,
+    accent: 'warning',
   },
   {
     key: 'secure',
     icon: 'finger-print-outline',
     title: 'Locked down with your fingerprint.',
     body: 'Sign in once. After that, just your face or thumb — your receipts stay yours.',
-    accent: theme.colors.primaryLight,
+    accent: 'primaryLight',
   },
 ];
 
@@ -63,6 +64,7 @@ export default function OnboardingScreen() {
   const { markOnboardingSeen } = useAuth();
   const [index, setIndex] = useState(0);
   const listRef = useRef<FlatList<Slide>>(null);
+  const styles = useStyles(makeStyles);
 
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -133,16 +135,19 @@ export default function OnboardingScreen() {
 }
 
 function SlideView({ slide }: { slide: Slide }) {
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
+  const accent = theme.colors[slide.accent];
   return (
     <View style={styles.slide}>
       <LinearGradient
-        colors={[slide.accent + '33', 'transparent']}
+        colors={[accent + '33', 'transparent']}
         style={styles.iconWrap}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
       >
-        <View style={[styles.iconCircle, { backgroundColor: slide.accent + '22' }]}>
-          <Ionicons name={slide.icon} size={64} color={slide.accent} />
+        <View style={[styles.iconCircle, { backgroundColor: accent + '22' }]}>
+          <Ionicons name={slide.icon} size={64} color={accent} />
         </View>
       </LinearGradient>
       <Text style={styles.title}>{slide.title}</Text>
@@ -151,81 +156,81 @@ function SlideView({ slide }: { slide: Slide }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
+const makeStyles = (t: Theme) => ({
+  container: { flex: 1, backgroundColor: t.colors.background },
   topRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing.sm,
-    paddingBottom: theme.spacing.md,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    paddingHorizontal: t.spacing.lg,
+    paddingTop: t.spacing.sm,
+    paddingBottom: t.spacing.md,
   },
   brand: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.lg,
-    fontWeight: '700',
+    color: t.colors.textPrimary,
+    fontSize: t.font.lg,
+    fontWeight: '700' as const,
     letterSpacing: 0.3,
   },
   skip: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.md,
-    fontWeight: '600',
+    color: t.colors.textSecondary,
+    fontSize: t.font.md,
+    fontWeight: '600' as const,
   },
   slide: {
     width: SCREEN_WIDTH,
-    paddingHorizontal: theme.spacing.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: t.spacing.xl,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   iconWrap: {
     width: 220,
     height: 220,
     borderRadius: 110,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: theme.spacing.xl,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    marginBottom: t.spacing.xl,
   },
   iconCircle: {
     width: 140,
     height: 140,
     borderRadius: 70,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   title: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xxl,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: theme.spacing.md,
+    color: t.colors.textPrimary,
+    fontSize: t.font.xxl,
+    fontWeight: '700' as const,
+    textAlign: 'center' as const,
+    marginBottom: t.spacing.md,
   },
   body: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.md,
-    textAlign: 'center',
+    color: t.colors.textSecondary,
+    fontSize: t.font.md,
+    textAlign: 'center' as const,
     lineHeight: 22,
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: t.spacing.md,
   },
   dotsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: theme.spacing.sm,
-    paddingVertical: theme.spacing.lg,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: t.spacing.sm,
+    paddingVertical: t.spacing.lg,
   },
   dot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: theme.colors.border,
+    backgroundColor: t.colors.border,
   },
   dotActive: {
     width: 24,
-    backgroundColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
   },
   cta: {
-    paddingHorizontal: theme.spacing.xl,
-    paddingBottom: theme.spacing.lg,
+    paddingHorizontal: t.spacing.xl,
+    paddingBottom: t.spacing.lg,
   },
 });

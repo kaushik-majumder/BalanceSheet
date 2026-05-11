@@ -1,10 +1,15 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text } from 'react-native';
-import { theme } from '../../constants/theme';
 
 type Props = { children: React.ReactNode };
 type State = { error: Error | null };
 
+/**
+ * Error boundary. Must be a class — React only supports class-based
+ * error boundaries (no hook equivalent). Because of that we can't use
+ * the `useStyles` hook here, so the error UI uses hardcoded colors
+ * picked to be readable on both light and dark backgrounds.
+ */
 export class ErrorBoundary extends React.Component<Props, State> {
   state: State = { error: null };
   static getDerivedStateFromError(error: Error): State {
@@ -29,25 +34,28 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 }
 
+// Hardcoded palette: neutral background works on both themes; red title
+// for the error label, dark gray monospace body. No theme tokens because
+// class components can't use the `useStyles` hook.
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: theme.colors.background,
-    padding: theme.spacing.md,
-    gap: theme.spacing.sm,
+    backgroundColor: '#1F2937',
+    padding: 16,
+    gap: 8,
   },
   title: {
-    color: theme.colors.error,
-    fontSize: theme.font.lg,
+    color: '#EF4444',
+    fontSize: 17,
     fontWeight: '700',
   },
   msg: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
+    color: '#F8FAFC',
+    fontSize: 13,
     fontFamily: 'monospace',
   },
   stack: {
-    color: theme.colors.textMuted,
+    color: '#94A3B8',
     fontSize: 11,
     fontFamily: 'monospace',
   },

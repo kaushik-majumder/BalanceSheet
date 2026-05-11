@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
-import { theme } from '../constants/theme';
+import { Theme, useStyles, useTheme } from '../constants/theme';
 import { useAuth } from '../lib/AuthContext';
 import { authenticateWithBiometric, getBiometricCapability } from '../lib/biometric';
 import * as LocalAuthentication from 'expo-local-authentication';
 
 export default function LockScreen() {
   const { user, markBiometricUnlocked, signOut } = useAuth();
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
   const [authing, setAuthing] = useState(false);
   const [iconName, setIconName] = useState<keyof typeof Ionicons.glyphMap>('finger-print-outline');
   const [label, setLabel] = useState('Unlock with biometric');
@@ -69,42 +71,42 @@ export default function LockScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
+const makeStyles = (t: Theme) => ({
+  container: { flex: 1, backgroundColor: t.colors.background },
   content: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: theme.spacing.xl,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    paddingHorizontal: t.spacing.xl,
   },
   iconCircle: {
     width: 160,
     height: 160,
     borderRadius: 80,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.colors.primaryFaint,
-    marginBottom: theme.spacing.xl,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    backgroundColor: t.colors.primaryFaint,
+    marginBottom: t.spacing.xl,
   },
   title: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xxl,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: theme.spacing.sm,
+    color: t.colors.textPrimary,
+    fontSize: t.font.xxl,
+    fontWeight: '700' as const,
+    textAlign: 'center' as const,
+    marginBottom: t.spacing.sm,
   },
   subtitle: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.md,
-    textAlign: 'center',
+    color: t.colors.textSecondary,
+    fontSize: t.font.md,
+    textAlign: 'center' as const,
   },
   footer: {
-    paddingHorizontal: theme.spacing.xl,
-    paddingBottom: theme.spacing.lg,
+    paddingHorizontal: t.spacing.xl,
+    paddingBottom: t.spacing.lg,
   },
   signOut: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
+    color: t.colors.textSecondary,
+    fontSize: t.font.sm,
+    fontWeight: '600' as const,
   },
 });

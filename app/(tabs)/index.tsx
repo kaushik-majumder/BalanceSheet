@@ -3,7 +3,6 @@ import {
   View,
   Text,
   ScrollView,
-  StyleSheet,
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
@@ -13,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { format, addMonths, subMonths } from 'date-fns';
 import { getReceiptsByMonth, deleteReceipt } from '../../lib/database';
 import { Receipt, MonthlyStats } from '../../types';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 import { SpendingChart } from '../../components/dashboard/SpendingChart';
 import { StatsRow } from '../../components/dashboard/StatsRow';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
@@ -21,6 +20,97 @@ import { Card } from '../../components/ui/Card';
 import { computeStats } from '../../lib/dashboardStats';
 
 export default function DashboardScreen() {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    screen: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    content: {
+      padding: t.spacing.md,
+      gap: t.spacing.md,
+      paddingBottom: 32,
+    },
+    heroCard: {
+      borderRadius: t.radius.xl,
+      padding: t.spacing.xl,
+      alignItems: 'center',
+      gap: 4,
+    },
+    heroLabel: {
+      color: 'rgba(255,255,255,0.8)',
+      fontSize: t.font.sm,
+      fontWeight: '600',
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+    },
+    heroAmount: {
+      color: '#fff',
+      fontSize: 48,
+      fontWeight: '800',
+      letterSpacing: -1,
+    },
+    monthRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.spacing.md,
+      marginTop: t.spacing.sm,
+    },
+    monthLabel: {
+      color: 'rgba(255,255,255,0.9)',
+      fontSize: t.font.md,
+      fontWeight: '600',
+      minWidth: 140,
+      textAlign: 'center',
+    },
+    section: {
+      gap: t.spacing.md,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    sectionTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.lg,
+      fontWeight: '700',
+    },
+    reportsLink: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+      borderRadius: t.radius.full,
+      backgroundColor: `${t.colors.primary}1A`,
+    },
+    reportsLinkText: {
+      color: t.colors.primary,
+      fontSize: t.font.xs,
+      fontWeight: '700',
+    },
+    list: {
+      gap: t.spacing.sm,
+    },
+    emptyCard: {
+      alignItems: 'center',
+      gap: t.spacing.sm,
+      paddingVertical: t.spacing.xxl,
+    },
+    emptyTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.xl,
+      fontWeight: '700',
+      marginTop: t.spacing.sm,
+    },
+    emptyText: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      textAlign: 'center',
+      maxWidth: 240,
+    },
+  }));
   const [activeMonth, setActiveMonth] = useState(new Date());
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [stats, setStats] = useState<MonthlyStats>({
@@ -161,93 +251,3 @@ export default function DashboardScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.md,
-    gap: theme.spacing.md,
-    paddingBottom: 32,
-  },
-  heroCard: {
-    borderRadius: theme.radius.xl,
-    padding: theme.spacing.xl,
-    alignItems: 'center',
-    gap: 4,
-  },
-  heroLabel: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroAmount: {
-    color: '#fff',
-    fontSize: 48,
-    fontWeight: '800',
-    letterSpacing: -1,
-  },
-  monthRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.spacing.md,
-    marginTop: theme.spacing.sm,
-  },
-  monthLabel: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: theme.font.md,
-    fontWeight: '600',
-    minWidth: 140,
-    textAlign: 'center',
-  },
-  section: {
-    gap: theme.spacing.md,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  sectionTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.lg,
-    fontWeight: '700',
-  },
-  reportsLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: theme.radius.full,
-    backgroundColor: `${theme.colors.primary}1A`,
-  },
-  reportsLinkText: {
-    color: theme.colors.primary,
-    fontSize: theme.font.xs,
-    fontWeight: '700',
-  },
-  list: {
-    gap: theme.spacing.sm,
-  },
-  emptyCard: {
-    alignItems: 'center',
-    gap: theme.spacing.sm,
-    paddingVertical: theme.spacing.xxl,
-  },
-  emptyTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xl,
-    fontWeight: '700',
-    marginTop: theme.spacing.sm,
-  },
-  emptyText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    textAlign: 'center',
-    maxWidth: 240,
-  },
-});

@@ -4,7 +4,6 @@ import {
   Alert,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -18,7 +17,7 @@ import * as FileSystem from 'expo-file-system';
 // doesn't have the native side linked, so a top-level import could
 // crash the screen on open. Load it lazily inside the export handler
 // instead — only paid for when the user actually taps the share icon.
-import { theme } from '../constants/theme';
+import { useStyles, useTheme } from '../constants/theme';
 import { DatePickerModal } from '../components/ui/DatePickerModal';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import {
@@ -78,6 +77,8 @@ export default function ReportsScreenWrapped() {
 }
 
 function ReportsScreen() {
+  const theme = useTheme();
+  const styles = useReportsStyles();
   const [preset, setPreset] = useState<PresetKey>('this');
   const initial = rangeForPreset('this');
   const [start, setStart] = useState<Date>(initial.start);
@@ -586,6 +587,8 @@ function ReportsScreen() {
 }
 
 function SummaryCard({ delta }: { delta: PeriodDelta | null }) {
+  const theme = useTheme();
+  const styles = useReportsStyles();
   if (!delta) return null;
   const { current, delta: d, deltaPct } = delta;
   const isUp = d > 0;
@@ -633,6 +636,8 @@ function TrendChart({
   activeMonthKeys: string[];
   onBarPress: (bucket: MonthBucket) => void;
 }) {
+  const theme = useTheme();
+  const styles = useReportsStyles();
   const max = Math.max(1, ...data.map((b) => b.total));
   const activeSet = new Set(activeMonthKeys);
   return (
@@ -686,6 +691,7 @@ function Section({
   title: string;
   children: React.ReactNode;
 }) {
+  const styles = useReportsStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -701,6 +707,7 @@ function CategorySparkline({
   points: Array<{ shortLabel: string; total: number }>;
   color: string;
 }) {
+  const styles = useReportsStyles();
   const max = Math.max(1, ...points.map((p) => p.total));
   return (
     <View style={styles.sparkRow}>
@@ -727,7 +734,8 @@ function CategorySparkline({
   );
 }
 
-const styles = StyleSheet.create({
+function useReportsStyles() {
+  return useStyles((theme) => ({
   root: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -1041,4 +1049,5 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-});
+  }));
+}

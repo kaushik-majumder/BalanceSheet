@@ -1,9 +1,9 @@
 import React from 'react';
-import { Image, Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useAuth } from '../../lib/AuthContext';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 
 /**
  * Header-right button for the dashboard tab. Shows the user's profile
@@ -11,6 +11,25 @@ import { theme } from '../../constants/theme';
  * icon otherwise. Tapping always opens the Settings modal.
  */
 export function HeaderProfileButton() {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    button: {
+      paddingRight: 16,
+    },
+    avatar: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    iconWrap: {
+      width: 30,
+      height: 30,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  }));
   const { profile } = useAuth();
   const photoUri = profile?.photoUri ?? null;
 
@@ -34,22 +53,3 @@ export function HeaderProfileButton() {
     </Pressable>
   );
 }
-
-const styles = StyleSheet.create({
-  button: {
-    paddingRight: 16,
-  },
-  avatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  iconWrap: {
-    width: 30,
-    height: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, AppState, AppStateStatus, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, AppState, AppStateStatus, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
-import { theme } from '../constants/theme';
+import { Theme, useStyles, useTheme } from '../constants/theme';
 import { useAuth } from '../lib/AuthContext';
 import { sendVerificationEmail } from '../lib/auth';
 import { humanizeAuthError } from '../lib/authErrors';
@@ -12,6 +12,8 @@ const RESEND_COOLDOWN_S = 30;
 
 export default function VerifyEmailScreen() {
   const { user, refreshUser, signOut } = useAuth();
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
   const [checking, setChecking] = useState(false);
   const [resending, setResending] = useState(false);
   const [resendIn, setResendIn] = useState(0);
@@ -119,48 +121,48 @@ export default function VerifyEmailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
+const makeStyles = (t: Theme) => ({
+  container: { flex: 1, backgroundColor: t.colors.background },
   content: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: theme.spacing.xl,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    paddingHorizontal: t.spacing.xl,
   },
   iconCircle: {
     width: 140,
     height: 140,
     borderRadius: 70,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.colors.primaryFaint,
-    marginBottom: theme.spacing.xl,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    backgroundColor: t.colors.primaryFaint,
+    marginBottom: t.spacing.xl,
   },
   title: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xxl,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: theme.spacing.md,
+    color: t.colors.textPrimary,
+    fontSize: t.font.xxl,
+    fontWeight: '700' as const,
+    textAlign: 'center' as const,
+    marginBottom: t.spacing.md,
   },
   subtitle: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.md,
-    textAlign: 'center',
+    color: t.colors.textSecondary,
+    fontSize: t.font.md,
+    textAlign: 'center' as const,
     lineHeight: 22,
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: t.spacing.md,
   },
   email: {
-    color: theme.colors.textPrimary,
-    fontWeight: '600',
+    color: t.colors.textPrimary,
+    fontWeight: '600' as const,
   },
   footer: {
-    paddingHorizontal: theme.spacing.xl,
-    paddingBottom: theme.spacing.lg,
+    paddingHorizontal: t.spacing.xl,
+    paddingBottom: t.spacing.lg,
   },
   signOut: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
+    color: t.colors.textSecondary,
+    fontSize: t.font.sm,
+    fontWeight: '600' as const,
   },
 });

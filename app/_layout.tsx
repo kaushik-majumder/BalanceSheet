@@ -2,10 +2,10 @@ import 'react-native-get-random-values';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { initDatabase } from '../lib/database';
-import { theme } from '../constants/theme';
+import { ThemeProvider, useTheme } from '../constants/theme';
 import { AuthProvider, useAuth } from '../lib/AuthContext';
 import { pickTarget, targetToHref } from '../lib/routeGuard';
 
@@ -16,12 +16,20 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <StatusBar style="light" />
-        <RootStack />
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <ThemedStatusBar />
+          <RootStack />
+        </AuthProvider>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
+}
+
+function ThemedStatusBar() {
+  const theme = useTheme();
+  // Light-content (white icons) on dark background; dark-content on light.
+  return <StatusBar style={theme.isDark ? 'light' : 'dark'} />;
 }
 
 /**
@@ -44,6 +52,7 @@ const STICKY_VOLUNTARY = new Set([
 ]);
 
 function RootStack() {
+  const theme = useTheme();
   const {
     initializing,
     user,
@@ -102,7 +111,14 @@ function RootStack() {
 
   if (initializing) {
     return (
-      <View style={styles.splash}>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: theme.colors.background,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
         <ActivityIndicator color={theme.colors.primary} size="large" />
       </View>
     );
@@ -161,11 +177,3 @@ function RootStack() {
   );
 }
 
-const styles = StyleSheet.create({
-  splash: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

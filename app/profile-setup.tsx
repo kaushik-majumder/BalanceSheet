@@ -6,7 +6,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -15,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
-import { theme } from '../constants/theme';
+import { Theme, useStyles, useTheme } from '../constants/theme';
 import { useAuth } from '../lib/AuthContext';
 import {
   GENDERS,
@@ -30,6 +29,8 @@ import { pickProfilePhoto } from '../lib/profilePhoto';
 
 export default function ProfileSetupScreen() {
   const { user, profile, setProfile, signOut } = useAuth();
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
 
   const [firstName, setFirstName] = useState(profile?.firstName ?? '');
   const [lastName, setLastName] = useState(profile?.lastName ?? '');
@@ -234,6 +235,8 @@ function Field({
   label: string;
   error?: string;
 } & React.ComponentProps<typeof TextInput>) {
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
   return (
     <View style={{ marginBottom: theme.spacing.md }}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -247,140 +250,140 @@ function Field({
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
+const makeStyles = (t: Theme) => ({
+  container: { flex: 1, backgroundColor: t.colors.background },
   topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.md,
-    paddingTop: theme.spacing.xs,
-    paddingBottom: theme.spacing.sm,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    paddingHorizontal: t.spacing.md,
+    paddingTop: t.spacing.xs,
+    paddingBottom: t.spacing.sm,
   },
   backBtn: {
     width: 32,
     height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   topBarTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    fontWeight: '700',
+    color: t.colors.textPrimary,
+    fontSize: t.font.md,
+    fontWeight: '700' as const,
   },
   scroll: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
+    paddingHorizontal: t.spacing.lg,
+    paddingTop: t.spacing.lg,
+    paddingBottom: t.spacing.xl,
   },
   header: {
-    marginBottom: theme.spacing.lg,
+    marginBottom: t.spacing.lg,
   },
   avatarWrap: {
-    alignSelf: 'center',
-    marginBottom: theme.spacing.sm,
+    alignSelf: 'center' as const,
+    marginBottom: t.spacing.sm,
   },
   avatar: {
     width: 110,
     height: 110,
     borderRadius: 55,
     borderWidth: 2,
-    borderColor: theme.colors.border,
+    borderColor: t.colors.border,
   },
   avatarPlaceholder: {
-    backgroundColor: theme.colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: t.colors.surface,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   avatarEditBadge: {
-    position: 'absolute',
+    position: 'absolute' as const,
     bottom: 0,
     right: 0,
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: theme.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: t.colors.primary,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
     borderWidth: 2,
-    borderColor: theme.colors.background,
+    borderColor: t.colors.background,
   },
   photoHint: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    textAlign: 'center',
-    marginBottom: theme.spacing.lg,
+    color: t.colors.textMuted,
+    fontSize: t.font.xs,
+    textAlign: 'center' as const,
+    marginBottom: t.spacing.lg,
   },
   title: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xxl,
-    fontWeight: '700',
-    marginBottom: theme.spacing.sm,
+    color: t.colors.textPrimary,
+    fontSize: t.font.xxl,
+    fontWeight: '700' as const,
+    marginBottom: t.spacing.sm,
   },
   subtitle: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.md,
+    color: t.colors.textSecondary,
+    fontSize: t.font.md,
   },
   form: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.lg,
+    backgroundColor: t.colors.surface,
+    borderRadius: t.radius.lg,
+    padding: t.spacing.lg,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: t.colors.border,
   },
   fieldLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-    marginBottom: theme.spacing.xs,
+    color: t.colors.textSecondary,
+    fontSize: t.font.sm,
+    fontWeight: '600' as const,
+    marginBottom: t.spacing.xs,
   },
   input: {
-    backgroundColor: theme.colors.background,
-    color: theme.colors.textPrimary,
-    borderRadius: theme.radius.md,
-    paddingHorizontal: theme.spacing.md,
+    backgroundColor: t.colors.background,
+    color: t.colors.textPrimary,
+    borderRadius: t.radius.md,
+    paddingHorizontal: t.spacing.md,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    fontSize: theme.font.md,
+    borderColor: t.colors.border,
+    fontSize: t.font.md,
   },
   inputError: {
-    borderColor: theme.colors.error,
+    borderColor: t.colors.error,
   },
   errorText: {
-    color: theme.colors.error,
-    fontSize: theme.font.xs,
+    color: t.colors.error,
+    fontSize: t.font.xs,
     marginTop: 4,
   },
   genderRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: theme.spacing.sm,
-    marginBottom: theme.spacing.xs,
+    flexDirection: 'row' as const,
+    flexWrap: 'wrap' as const,
+    gap: t.spacing.sm,
+    marginBottom: t.spacing.xs,
   },
   genderChip: {
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: t.spacing.md,
     paddingVertical: 8,
-    borderRadius: theme.radius.full,
+    borderRadius: t.radius.full,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.background,
   },
   genderChipActive: {
-    backgroundColor: theme.colors.primaryFaint,
-    borderColor: theme.colors.primary,
+    backgroundColor: t.colors.primaryFaint,
+    borderColor: t.colors.primary,
   },
   genderChipText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
+    color: t.colors.textSecondary,
+    fontSize: t.font.sm,
+    fontWeight: '600' as const,
   },
   genderChipTextActive: {
-    color: theme.colors.primary,
+    color: t.colors.primary,
   },
   signOut: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
+    color: t.colors.textSecondary,
+    fontSize: t.font.sm,
+    fontWeight: '600' as const,
   },
 });
