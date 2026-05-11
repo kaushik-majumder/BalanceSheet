@@ -21,9 +21,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import TextRecognition from 'react-native-text-recognition';
 import { v4 as uuidv4 } from 'uuid';
-import { saveReceipt } from '../../lib/database';
-import { parseReceiptText } from '../../lib/parser';
-import { parseReceiptWithGemini } from '../../lib/geminiParseReceipt';
+import {
+  saveReceipt,
+  saveCorrection,
+  getRelevantCorrections,
+  getGeminiCachedResponse,
+  setGeminiCachedResponse,
+} from '../../lib/database';
+import { parseReceiptText, parseYmdLocal } from '../../lib/parser';
+import {
+  parseReceiptWithGemini,
+  parseGeminiPayload,
+} from '../../lib/geminiParseReceipt';
+import { parseReceiptWithCloudflare } from '../../lib/cloudflareReceiptParse';
+import { getGeminiApiKey } from '../../lib/secureStorage';
 import { ParsedReceipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES } from '../../constants/categories';
@@ -89,9 +100,17 @@ export default function ScanScreen() {
   const [showAllItems, setShowAllItems] = useState(false);
   const [editingItem, setEditingItem] = useState<LineItem | null>(null);
   const [items, setItems] = useState<LineItem[]>([]);
+  // Snapshot of the items returned by the parser pipeline (regex or
+  // AI). Used at save-time to detect whether the user manually
+  // corrected anything — if so we stash the OCR + final items so
+  // future scans of the same store get them as in-context examples.
+  const [parserBaseline, setParserBaseline] = useState<LineItem[]>([]);
   const [aiPending, setAiPending] = useState(false);
   const [aiApplied, setAiApplied] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<{
+    kind: import('../../lib/geminiParseReceipt').GeminiErrorKind;
+    message: string;
+  } | null>(null);
   const [rawText, setRawText] = useState('');
 
   const runOCR = async (uri: string) => {
@@ -111,6 +130,7 @@ export default function ScanScreen() {
       setCategory(result.category);
       setCategoryTags(result.categoryTags ?? [result.category]);
       setItems(result.lineItems);
+      setParserBaseline(result.lineItems);
       setAiApplied(false);
       setAiError(null);
       setScanState('review');
@@ -206,13 +226,9 @@ export default function ScanScreen() {
     setSaving(true);
     try {
       const now = new Date().toISOString();
-      let parsedDate: Date;
-      try {
-        parsedDate = new Date(date);
-        if (isNaN(parsedDate.getTime())) parsedDate = new Date();
-      } catch {
-        parsedDate = new Date();
-      }
+      // Parse the user-typed YYYY-MM-DD as LOCAL time so the saved
+      // wall-clock date matches what's on the receipt (see parseYmdLocal).
+      const parsedDate: Date = parseYmdLocal(date) ?? new Date();
 
       const subtotalVal = subtotal.trim() ? parseFloat(subtotal.replace(',', '.')) : undefined;
       const taxVal = tax.trim() ? parseFloat(tax.replace(',', '.')) : undefined;
@@ -244,6 +260,32 @@ export default function ScanScreen() {
         createdAt: now,
         updatedAt: now,
       });
+
+      // Feedback loop: if the user edited items vs. what the parser
+      // (regex or AI) returned, save the OCR + corrected items as an
+      // example so future scans of this store inherit their fixes.
+      // Fire-and-forget — the receipt is already saved; this is just
+      // training data.
+      const itemsChanged =
+        items.length !== parserBaseline.length ||
+        items.some((it, i) => {
+          const b = parserBaseline[i];
+          return (
+            !b ||
+            b.name !== it.name ||
+            Math.abs(b.amount - it.amount) > 0.005 ||
+            b.category !== it.category
+          );
+        });
+      if (itemsChanged && rawText && storeName.trim()) {
+        saveCorrection({
+          storeName: storeName.trim(),
+          rawOcr: rawText,
+          items,
+        }).catch(() => {
+          // non-fatal — corrections are best-effort training data
+        });
+      }
 
       Alert.alert('Saved!', 'Receipt has been saved successfully.', [
         {
@@ -284,19 +326,135 @@ export default function ScanScreen() {
     setRawText('');
   };
 
+  // Apply a Gemini-validated receipt into the form state. Used from
+  // both the live API path and the cache-hit path.
+  const applyAiResult = (
+    ai: import('../../lib/geminiParseReceipt').GeminiReceipt,
+  ) => {
+    setStoreName(ai.storeName);
+    if (ai.date) {
+      // Gemini returns a bare "YYYY-MM-DD" string. Parse as local
+      // time so the displayed date matches the receipt's wall-clock
+      // date instead of being shifted by the user's timezone offset.
+      const d = parseYmdLocal(ai.date) ?? new Date(ai.date);
+      setDate(format(d, 'yyyy-MM-dd'));
+    }
+    if (ai.totalAmount > 0) setAmount(ai.totalAmount.toFixed(2));
+    if (ai.subtotalAmount != null) setSubtotal(ai.subtotalAmount.toFixed(2));
+    else setSubtotal('');
+    if (ai.taxAmount != null) setTax(ai.taxAmount.toFixed(2));
+    else setTax('');
+    setItems(ai.lineItems);
+    setParserBaseline(ai.lineItems);
+    const dominantCategory = pickDominantCategory(ai.lineItems);
+    if (dominantCategory) setCategory(dominantCategory);
+    if (ai.categoryTags && ai.categoryTags.length > 0) {
+      setCategoryTags(ai.categoryTags);
+    } else {
+      const uniq = uniqueItemCategories(ai.lineItems);
+      if (uniq.length) setCategoryTags(uniq);
+    }
+  };
+
   const runAiParse = async (text: string) => {
-    const geminiKey = (Constants.expoConfig?.extra as { geminiApiKey?: string } | undefined)
-      ?.geminiApiKey;
-    if (!geminiKey) {
-      setAiError('No Gemini key configured.');
+    const extra = (Constants.expoConfig?.extra ?? {}) as {
+      geminiApiKey?: string;
+      parseEndpoint?: string;
+      parseEndpointSecret?: string;
+    };
+    const sharedGeminiKey = extra.geminiApiKey;
+    const workerEndpoint = extra.parseEndpoint;
+    const workerSecret = extra.parseEndpointSecret;
+    const userGeminiKey = await getGeminiApiKey().catch(() => null);
+
+    if (!sharedGeminiKey && !workerEndpoint && !userGeminiKey) {
+      setAiError({ kind: 'no-key', message: 'AI not configured for this build.' });
       return;
     }
     setAiPending(true);
     setAiError(null);
     try {
-      const aiResult = await parseReceiptWithGemini(text, geminiKey);
-      if (!aiResult.ok) {
-        setAiError(aiResult.error.slice(0, 80));
+      // Cache hit? Avoid burning a quota request on a receipt we
+      // already parsed within the last 24 hours. Repeat scans
+      // (testing, OCR retries) used to fail with 429 here.
+      const cached = await getGeminiCachedResponse(text).catch(() => null);
+      if (cached) {
+        const cachedResult = parseGeminiPayload(cached);
+        if (cachedResult.ok) {
+          applyAiResult(cachedResult.receipt);
+          setAiApplied(true);
+          setAiError(null);
+          return;
+        }
+      }
+
+      // Pull up to 2 prior user-corrections for whatever store the
+      // regex parser thinks this is. The selected backend (Gemini or
+      // the Worker) sees these as few-shot examples and tends to
+      // mirror their structure — so the more the user scans a given
+      // store, the more accurate it gets.
+      const guessedStore = (parsed?.storeName || storeName || '').trim();
+      const examples = guessedStore
+        ? await getRelevantCorrections(guessedStore, 2).catch(() => [])
+        : [];
+
+      // Backend selection priority:
+      //   1. User's own Gemini key (BYOK) — best quality, their quota
+      //   2. App-bundled shared Gemini key — works until daily quota
+      //   3. Cloudflare Worker proxy — free Llama 3.3 fallback
+      //
+      // Each step falls through to the next on rate-limit / auth /
+      // network errors so a single quota exhaustion or one provider
+      // outage doesn't break the scan.
+      const tryBackend = async (
+        run: () => ReturnType<typeof parseReceiptWithGemini>,
+      ) => {
+        let r = await run();
+        if (!r.ok && r.kind === 'rate-limited') {
+          // Short backoff helps for transient RPM bursts.
+          await new Promise((res) => setTimeout(res, 3000));
+          r = await run();
+        }
+        return r;
+      };
+
+      let aiResult: Awaited<ReturnType<typeof parseReceiptWithGemini>> | null = null;
+      if (userGeminiKey) {
+        aiResult = await tryBackend(() =>
+          parseReceiptWithGemini(text, userGeminiKey, undefined, examples),
+        );
+      }
+      const isFallbackWorthy = (
+        r: Awaited<ReturnType<typeof parseReceiptWithGemini>> | null,
+      ) =>
+        !r ||
+        (!r.ok &&
+          (r.kind === 'rate-limited' ||
+            r.kind === 'auth' ||
+            r.kind === 'network' ||
+            r.kind === 'server' ||
+            r.kind === 'no-key'));
+
+      if (isFallbackWorthy(aiResult) && sharedGeminiKey) {
+        aiResult = await tryBackend(() =>
+          parseReceiptWithGemini(text, sharedGeminiKey, undefined, examples),
+        );
+      }
+
+      if (isFallbackWorthy(aiResult) && workerEndpoint) {
+        aiResult = await parseReceiptWithCloudflare({
+          rawText: text,
+          endpoint: workerEndpoint,
+          appSecret: workerSecret,
+          examples,
+        });
+      }
+
+      if (!aiResult || !aiResult.ok) {
+        setAiError({
+          kind: aiResult?.kind ?? 'unknown',
+          message: aiResult?.error ?? 'AI parse failed.',
+        });
         return;
       }
       const ai = aiResult.receipt;
@@ -310,35 +468,67 @@ export default function ScanScreen() {
         ai.taxAmount != null ||
         ai.totalAmount > 0;
       if (!aiUseful) {
-        setAiError('AI returned no usable data.');
+        setAiError({ kind: 'empty', message: 'AI returned no usable data.' });
         return;
       }
-      setStoreName(ai.storeName);
-      if (ai.date) setDate(format(new Date(ai.date), 'yyyy-MM-dd'));
-      if (ai.totalAmount > 0) setAmount(ai.totalAmount.toFixed(2));
-      if (ai.subtotalAmount != null) setSubtotal(ai.subtotalAmount.toFixed(2));
-      else setSubtotal('');
-      if (ai.taxAmount != null) setTax(ai.taxAmount.toFixed(2));
-      else setTax('');
-      setItems(ai.lineItems);
-      // Update the receipt-level category to the dominant category
-      // among line items (highest summed amount). Falls back to 'Other'.
-      const dominantCategory = pickDominantCategory(ai.lineItems);
-      if (dominantCategory) setCategory(dominantCategory);
-      // Multi-select tags: prefer Gemini's suggested categoryTags
-      // (which can include custom names like "Pet Food"), otherwise
-      // fall back to the unique categories among the items.
-      if (ai.categoryTags && ai.categoryTags.length > 0) {
-        setCategoryTags(ai.categoryTags);
-      } else {
-        const uniq = uniqueItemCategories(ai.lineItems);
-        if (uniq.length) setCategoryTags(uniq);
-      }
+      applyAiResult(ai);
       setAiApplied(true);
+      // Cache the successful response so a re-scan of the same OCR
+      // doesn't burn another quota request. We serialize the validated
+      // shape (not the raw Gemini envelope) so the read path can use
+      // parseGeminiPayload uniformly.
+      setGeminiCachedResponse(
+        text,
+        JSON.stringify({
+          store: ai.storeName,
+          date: ai.date,
+          subtotal: ai.subtotalAmount ?? null,
+          tax: ai.taxAmount ?? null,
+          total: ai.totalAmount,
+          categoryTags: ai.categoryTags,
+          items: ai.lineItems.map((it) => ({
+            name: it.name,
+            amount: it.amount,
+            category: it.category ?? 'Other',
+          })),
+        }),
+      ).catch(() => {
+        // non-fatal — cache is opportunistic
+      });
     } catch (e) {
-      setAiError((e as Error)?.message?.slice(0, 80) ?? 'AI parse failed.');
+      setAiError({
+        kind: 'unknown',
+        message: (e as Error)?.message ?? 'AI parse failed.',
+      });
     } finally {
       setAiPending(false);
+    }
+  };
+
+  // Map an AI failure into a one-line human-readable message + tone.
+  // Used by the small chip below the OCR preview. Keep these short
+  // and reassuring — the regex parser has already filled the fields.
+  const aiErrorMessage = (
+    err: { kind: import('../../lib/geminiParseReceipt').GeminiErrorKind } | null,
+  ): string => {
+    if (!err) return '';
+    switch (err.kind) {
+      case 'rate-limited':
+        return 'AI quota reached — using basic parser. Try again in a few minutes or edit items manually.';
+      case 'network':
+        return 'No internet for AI — using basic parser. Tap to retry.';
+      case 'auth':
+        return 'AI key rejected — please check Settings.';
+      case 'server':
+        return 'AI service is down — using basic parser. Tap to retry.';
+      case 'no-key':
+        return 'AI not configured.';
+      case 'empty':
+        return 'AI returned nothing — using basic parser. Tap to retry.';
+      case 'parse':
+      case 'unknown':
+      default:
+        return "AI couldn't read this — using basic parser. Tap to retry.";
     }
   };
 
@@ -453,9 +643,13 @@ export default function ScanScreen() {
             onPress={() => runAiParse(rawText)}
             style={styles.aiChipError}
           >
-            <Ionicons name="alert-circle-outline" size={14} color={theme.colors.error} />
+            <Ionicons
+              name="information-circle-outline"
+              size={14}
+              color={theme.colors.warning}
+            />
             <Text style={styles.aiChipErrorText} numberOfLines={2}>
-              AI parse failed: {aiError}. Tap to retry.
+              {aiErrorMessage(aiError)}
             </Text>
           </TouchableOpacity>
         )}
@@ -800,16 +994,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: theme.radius.full,
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    backgroundColor: 'rgba(245, 158, 11, 0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.4)',
+    borderColor: 'rgba(245, 158, 11, 0.4)',
     marginTop: 8,
     maxWidth: '100%',
   },
   aiChipErrorText: {
-    color: theme.colors.error,
+    color: theme.colors.warning,
     fontSize: theme.font.xs,
-    fontWeight: '700',
+    fontWeight: '600',
     flexShrink: 1,
   },
   aiRetryBtn: {

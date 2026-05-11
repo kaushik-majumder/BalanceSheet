@@ -14,19 +14,36 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Category } from '../types';
 import { theme } from '../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../constants/categories';
-import { getAllReceipts } from '../lib/database';
+import { getAllReceipts, getReceiptsByMonth } from '../lib/database';
+import { format as formatDate } from 'date-fns';
 import {
   buildCategoryDrilldown,
   CategoryDrilldownResult,
 } from '../lib/categoryDrilldown';
 
 export default function CategoryDetailScreen() {
-  const params = useLocalSearchParams<{ category?: string }>();
+  const params = useLocalSearchParams<{
+    category?: string;
+    year?: string;
+    month?: string;
+  }>();
   const category: Category | string =
     typeof params.category === 'string' && params.category.length > 0
       ? params.category
       : 'Other';
   const standard = isCategory(category);
+
+  // When the dashboard passes year+month, scope the drilldown to that
+  // month so the user sees ONLY the receipts that contributed to the
+  // breakdown bar they tapped — not a cross-month rollup of every
+  // receipt ever scanned. Falls back to global if absent (e.g.
+  // navigation from history or direct deep link).
+  const yearNum = params.year ? parseInt(params.year, 10) : null;
+  const monthNum = params.month ? parseInt(params.month, 10) : null;
+  const scoped = Number.isFinite(yearNum) && Number.isFinite(monthNum);
+  const monthLabel = scoped
+    ? formatDate(new Date(yearNum!, monthNum! - 1, 1), 'MMMM yyyy')
+    : null;
 
   const [result, setResult] = useState<CategoryDrilldownResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,7 +52,9 @@ export default function CategoryDetailScreen() {
     useCallback(() => {
       let mounted = true;
       (async () => {
-        const receipts = await getAllReceipts();
+        const receipts = scoped
+          ? await getReceiptsByMonth(yearNum!, monthNum!)
+          : await getAllReceipts();
         if (!mounted) return;
         setResult(buildCategoryDrilldown(receipts, category));
         setLoading(false);
@@ -43,7 +62,7 @@ export default function CategoryDetailScreen() {
       return () => {
         mounted = false;
       };
-    }, [category]),
+    }, [category, yearNum, monthNum, scoped]),
   );
 
   const accent = standard
@@ -83,7 +102,11 @@ export default function CategoryDetailScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <View style={[styles.heroCard, { borderColor: accent }]}>
-            <Text style={styles.heroLabel}>Total in {category}</Text>
+            <Text style={styles.heroLabel}>
+              {monthLabel
+                ? `${category} in ${monthLabel}`
+                : `Total in ${category}`}
+            </Text>
             <Text style={[styles.heroAmount, { color: accent }]}>
               ${result.totalSpent.toFixed(2)}
             </Text>

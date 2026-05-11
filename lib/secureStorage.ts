@@ -5,6 +5,7 @@ const Keys = {
   biometricEnabled: 'bs.biometric.enabled',
   biometricAsked: 'bs.biometric.asked',
   anthropicApiKey: 'bs.anthropic.apiKey',
+  geminiApiKey: 'bs.gemini.apiKey',
   aiClassifyEnabled: 'bs.aiClassify.enabled',
 } as const;
 
@@ -48,6 +49,18 @@ export async function setAnthropicApiKey(key: string | null): Promise<void> {
     await SecureStore.setItemAsync(Keys.anthropicApiKey, key.trim());
   } else {
     await SecureStore.deleteItemAsync(Keys.anthropicApiKey);
+  }
+}
+
+export async function getGeminiApiKey(): Promise<string | null> {
+  return await SecureStore.getItemAsync(Keys.geminiApiKey);
+}
+
+export async function setGeminiApiKey(key: string | null): Promise<void> {
+  if (key && key.trim()) {
+    await SecureStore.setItemAsync(Keys.geminiApiKey, key.trim());
+  } else {
+    await SecureStore.deleteItemAsync(Keys.geminiApiKey);
   }
 }
 

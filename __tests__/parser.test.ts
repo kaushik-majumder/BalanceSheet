@@ -39,6 +39,31 @@ describe('parseReceiptText - store name extraction', () => {
     expect(parseReceiptText('').storeName).toBe('Unknown Store');
     expect(parseReceiptText('555-1234\n12/05/2026').storeName).toBe('Unknown Store');
   });
+
+  it('skips BOGO promo banners (with OCR mangling) and falls back to known chain', () => {
+    // Real-world: user photographs only the bottom half of a Skechers
+    // receipt. The actual SKECHERS header is cropped out but the
+    // diagonal watermark still bleeds "SKECHERS" into the OCR text.
+    // The first content line is a mangled BOGO banner. The parser
+    // should NOT use the banner as the store name.
+    const text = [
+      '***B0GU D0% 0ff Footwear***',
+      '197627199313 REVOLTED SD - MAVIS- $46.99T',
+      'Subtotal $46.99',
+      'SKECHERS',
+    ].join('\n');
+    expect(parseReceiptText(text).storeName).toMatch(/^skechers$/i);
+  });
+
+  it('skips "50% off" and "Sale" promo lines', () => {
+    const text = [
+      '50% Off Everything',
+      'Sale',
+      'Old Navy',
+      'Total $25.00',
+    ].join('\n');
+    expect(parseReceiptText(text).storeName).toBe('Old Navy');
+  });
 });
 
 describe('parseReceiptText - date extraction', () => {
@@ -88,6 +113,54 @@ describe('parseReceiptText - date extraction', () => {
   it('rejects dates before year 2000', () => {
     const result = parseReceiptText('Some Store\n1995-06-15\nTotal $5.00');
     expect(result.date.startsWith('1995')).toBe(false);
+  });
+
+  it('extracts MM/DD/YYYY with trailing time (e.g. "08/31/2025 05:48:02 PM")', () => {
+    // Skechers footer format. Previously could accidentally match the
+    // address number or other digits; now we look at the whole text.
+    const result = parseReceiptText(
+      'Store: 1431 Reg: 22 Tran: 17328\nDate: 08/31/2025 05:48:02 PM Assoc: 416855\nTotal $5.00',
+    );
+    expect(result.date.startsWith('2025-08-31')).toBe(true);
+  });
+
+  it('extracts YYYY/MM/DD slash format (Costco footer)', () => {
+    const result = parseReceiptText(
+      'COSTCO\nAUTH #: 3292E 2026/05/09 19:01:09\nTotal $5.00',
+    );
+    expect(result.date.startsWith('2026/05/09'.replace(/\//g, '-'))).toBe(true);
+  });
+
+  it('picks the most recent plausible date when multiple candidates exist', () => {
+    // Receipts often have a "valid until" or address-line date in
+    // addition to the actual transaction date. The transaction date
+    // is almost always the most recent one.
+    const result = parseReceiptText(
+      'Some Store\nValid Through: 2024-12-31\nDate: 2026-05-09\nTotal $5.00',
+    );
+    expect(result.date.startsWith('2026-05-09')).toBe(true);
+  });
+
+  it('handles European DD/MM/YYYY when day > 12 disambiguates', () => {
+    // "25/03/2025" — 25 can't be a month, so we know day=25 month=3.
+    const result = parseReceiptText('Some Store\n25/03/2025\nTotal $5.00');
+    expect(result.date.startsWith('2025-03-25')).toBe(true);
+  });
+
+  it('preserves wall-clock date when round-tripped through local-time format', () => {
+    // Regression: extractDate used to build the Date via the ISO
+    // string constructor ("YYYY-MM-DD"), which parses as UTC midnight.
+    // Users in negative-offset timezones (EDT, PDT, etc.) then saw
+    // the previous day after formatting back in local time. Now the
+    // (y, m, d) ctor is used so local time is preserved.
+    const result = parseReceiptText('Some Store\n08/31/2025\nTotal $5.00');
+    const d = new Date(result.date);
+    // getDate/getMonth/getFullYear are all LOCAL — which is exactly
+    // what the UI uses via date-fns `format`. The wall-clock date
+    // must match the receipt regardless of the test machine's TZ.
+    expect(d.getFullYear()).toBe(2025);
+    expect(d.getMonth()).toBe(7); // August (0-indexed)
+    expect(d.getDate()).toBe(31);
   });
 });
 
@@ -847,5 +920,82 @@ describe('parseReceiptText - Costco TPD markdown lines', () => {
     expect(mirror).toBeDefined();
     expect(mirror!.amount).toBeCloseTo(54.99, 2);
     expect(r.lineItems.some((i) => i.amount < 0)).toBe(false);
+  });
+});
+
+describe('parseReceiptText - Skechers multi-line items with BOGO discount', () => {
+  // Each item spans 3-4 OCR rows: name+price, Style:, Size:Color:, and
+  // optionally BOGO/New Price/discount lines. The parser must extract
+  // exactly 4 items and apply the $52.50 BOGO discount to the
+  // ON-THE-GO FLEX item.
+  const ocr = [
+    'SKECHERS',
+    'OSHAWA SOUTH SMARTCENTERS',
+    '560 LAVAL DRIVE',
+    'UNIT #C0001',
+    'OSHAWA ONTARIO, ON L1J 0B5',
+    'SALE',
+    '***BOGO 50% Off Footwear***',
+    '197627156231 UNO - SUITED ON AIR $110.00T',
+    'Style: 183004BLK',
+    'Size: 8 Color: BLACK',
+    'BOGO 50% Off Footwear $0.00',
+    'New Price: $110.00',
+    '197976255623 ON-THE-GO FLEX - CO $104.99T',
+    'Style: 138215NVW',
+    'Size: 8 Color: NVY/WHT ($52.50)',
+    'BOGO 50% Off Footwear',
+    'New Price: $52.49',
+    '******',
+    '197627199313 REVOLTED SD - MAVIS- $46.99T',
+    'Style: 205166BLK',
+    'Size: 7 Color: BLACK',
+    '192283775864 SHOE CARE GIFT SET - $18.00T',
+    'Style: SK0027AST',
+    'Size: ONE SIZE ONLY Color: ASSORTED',
+    'Subtotal $227.48',
+    'Harmonized Sales Tax 13 % $29.57',
+    'Total $257.05',
+    'You Saved $52.50',
+    'MasterCard $257.05',
+  ].join('\n');
+
+  it('extracts the store name as Skechers', () => {
+    const r = parseReceiptText(ocr);
+    expect(r.storeName).toMatch(/skechers/i);
+  });
+
+  it('does NOT emit Style:, Size:, BOGO, or New Price lines as items', () => {
+    const r = parseReceiptText(ocr);
+    for (const item of r.lineItems) {
+      expect(item.name).not.toMatch(/^style\b/i);
+      expect(item.name).not.toMatch(/^size\b/i);
+      expect(item.name).not.toMatch(/^new\s+price/i);
+      expect(item.name).not.toMatch(/^bogo/i);
+      expect(item.name).not.toMatch(/^you\s+saved/i);
+    }
+  });
+
+  it('treats ($52.50) parenthesized amount as a discount and merges into the previous item', () => {
+    const r = parseReceiptText(ocr);
+    // After discount merging, the ON-THE-GO FLEX line should be $52.49.
+    const flex = r.lineItems.find((i) => /on.the.go\s+flex|flex/i.test(i.name));
+    expect(flex).toBeDefined();
+    expect(flex!.amount).toBeCloseTo(52.49, 1);
+    // No standalone negative lines should leak through.
+    expect(r.lineItems.some((i) => i.amount < 0)).toBe(false);
+  });
+
+  it('captures the $227.48 subtotal and $29.57 HST', () => {
+    const r = parseReceiptText(ocr);
+    expect(r.subtotalAmount).toBeCloseTo(227.48, 2);
+    expect(r.taxAmount).toBeCloseTo(29.57, 2);
+    expect(r.totalAmount).toBeCloseTo(257.05, 2);
+  });
+
+  it('extracts the transaction date 2025-08-31 from the footer', () => {
+    const ocrWithDate = `${ocr}\nDate: 08/31/2025 05:48:02 PM Assoc: 416855`;
+    const r = parseReceiptText(ocrWithDate);
+    expect(r.date.startsWith('2025-08-31')).toBe(true);
   });
 });

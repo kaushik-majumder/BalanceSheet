@@ -9,7 +9,11 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
 
 export type GeminiReceipt = {
   storeName: string;
-  date: string; // YYYY-MM-DD or empty
+  /** ISO timestamp string, e.g. "2025-08-31T04:00:00.000Z". Built
+   *  from the receipt's wall-clock date interpreted in LOCAL time so
+   *  round-trips through `format(..., "yyyy-MM-dd")` (which also uses
+   *  local time) preserve the date the user saw on the receipt. */
+  date: string;
   subtotalAmount?: number;
   taxAmount?: number;
   totalAmount: number;
@@ -20,43 +24,96 @@ export type GeminiReceipt = {
   categoryTags: string[];
 };
 
+/** A reason code we surface to the UI so it can pick the right copy
+ *  and decide whether to auto-retry. */
+export type GeminiErrorKind =
+  | 'no-key'
+  | 'network'
+  | 'rate-limited'
+  | 'auth'
+  | 'server'
+  | 'parse'
+  | 'empty'
+  | 'unknown';
+
 export type GeminiParseResult =
   | { ok: true; receipt: GeminiReceipt }
-  | { ok: false; error: string };
+  | { ok: false; kind: GeminiErrorKind; error: string };
 
 const PROMPT = `You are a receipt parser. Extract structured data from the receipt OCR text below.
 
 Rules for ITEMS:
-- CRITICAL: pair every item NAME with the price that appears on the SAME receipt row in the original receipt. Do not shift, sort, or rearrange. Read the receipt top to bottom, row by row.
-- If the OCR text returns names and prices in two separate vertical blocks (left column then right column), treat them as parallel arrays: name[i] pairs with price[i]. Keep the original order from the receipt.
-- The item amounts must SUM to the subtotal (within $0.50 of rounding/tax tolerance). If they don't, you've paired wrong — re-check the order.
-- Strip 8-14 digit UPC/SKU codes from item names.
-- Strip leading numeric item codes (e.g. "1420528 VEGGIES PK 4" → "VEGGIES PK 4").
-- Strip the trailing single-letter tax-status flag (e.g. "H", "J", "D", "E") from item names.
-- Negative amounts (e.g. "$15.00-" or "-15.00") ARE valid items — they represent discounts/markdowns. Include them as their own line item with a negative amount, paired with the name on that receipt row (often a TPD/markdown reference to a previous item, e.g. "TPD/1993379"). Do NOT pre-merge them into the original item — leave the merging to the downstream code.
-- Do NOT include these as items, they are markers / payment / header noise:
-  - SUBTOTAL, TAX, TOTAL, AMOUNT, BALANCE, CHANGE, TENDER lines
-  - Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE
-  - Bank/EMV codes: RRN, AID, TC, AUTH, REFERENCE, APPROVAL
-  - Costco markers: "Bottom of basket", "BOB Count", "Items Sold: N"
-  - Loyalty info: "ZV Member", "Member #", "Membership"
-  - Masked card numbers (lines with mostly X's, e.g. "XXXXXXXXXXXX0933")
-  - Postal codes / phone numbers / store address lines
-  - Tax footnotes like "H = HST G = GST"
-  - Signature / approval status lines
-- For each item, choose the BEST matching category from the allowed list.
+- CRITICAL: emit ONE line item per PHYSICAL PRODUCT the customer is paying for, at the NET PRICE they actually paid for that product. Never emit standalone discount/promo lines, never emit metadata lines, never emit lines with a $0.00 amount.
+- Determining the NET PRICE — apply these rules to each product, in order:
+    1. If the same product has an explicit "New Price: $X" line directly below it, use $X.
+    2. Otherwise, if there's a discount line attached to that product — written as a negative number ("$15.00-", "-15.00", or "($52.50)"), or as a "TPD/{SKU}" line referencing the product's SKU — subtract that discount from the printed price and use the result.
+    3. Otherwise use the price printed on the product's name row.
+- The item amounts must SUM to the SUBTOTAL (within $0.50 of rounding). If they don't, you've made a pairing or discount mistake — re-read the receipt and fix it before responding. This is a hard requirement.
+- Pair every item NAME with the price that appears on the SAME receipt row. Read top to bottom, row by row. If OCR returns names and prices in two parallel columns, treat them as parallel arrays: name[i] ↔ price[i]. Do not shift, sort, or rearrange.
+- Strip 8-14 digit UPC/SKU codes and leading numeric item codes from names (e.g. "1420528 VEGGIES PK 4" → "VEGGIES PK 4", "197627156231 UNO - SUITED ON AIR" → "UNO - SUITED ON AIR").
+- Strip the trailing single-letter tax-status flag (e.g. "H", "J", "D", "E", "T") from item names.
+- Many receipts print one product across MULTIPLE OCR rows. The first row has the NAME and PRICE; the next rows have METADATA. Attribute metadata to the previous product — do NOT emit them as separate items. Always skip:
+    "Style: 183004BLK", "Size: 8 Color: BLACK"
+    "BOGO 50% Off Footwear" (even when it has a "$0.00" on the same line — that $0.00 is a discount placeholder for the "buy" item in a buy-one-get-one, NOT a product price)
+    "New Price: $X"          (a SUMMARY of the net price you computed above)
+    "TPD/{SKU}"              (a TPD/markdown reference — its negative amount is the discount for the SKU it references)
+    "You Saved $X"           (receipt-level savings summary)
+    "Items Sold: N", "Items Returned: N"
+- Do NOT include these as items either — they are payment / EMV / header noise:
+    SUBTOTAL, TAX, TOTAL, AMOUNT, BALANCE, CHANGE, TENDER, AMOUNT TENDERED
+    Transaction IDs: STORE / ST / OP / TE / TR / TRM / WHSE / INVOICE, Sequence Number, Approval Code, Assoc/Reg/Tran
+    Bank/EMV codes: RRN, AID, TC, AUTH, REFERENCE, APPROVAL, TVR, TSI, IAD, ARC, ACI, ISO, Application Cryptogram/Preferred Name/Label
+    Costco markers: "Bottom of basket", "BOB Count", "ZV Member", "Member #", "Membership"
+    Masked card numbers (mostly X's, e.g. "XXXXXXXXXXXX0933")
+    Postal codes, phone numbers, store address lines, tax footnotes ("H = HST G = GST")
+    Signature / approval status lines, "Verified by PIN"
+- For each item's category, FIRST decide the receipt-level categoryTags (see Rules for FIELDS below), then assign EVERY item to ONE of those categoryTags. This keeps the per-item categorization in sync with the receipt's overall classification.
+  - If categoryTags is ["Footwear", "Other"], items must be either "Footwear" or "Other" — not "Clothing".
+  - If categoryTags is just standard categories like ["Groceries", "Pharmacy"], items must be one of those.
+  - If an item doesn't fit any of the chosen categoryTags, use "Other".
+  - DO NOT pick a category for an item that isn't in categoryTags. Pick the closest tag instead.
+
+Allowed STANDARD categories (you can use these AND/OR custom tags): ${ALL_CATEGORIES.join(', ')}. Mapping cheatsheet: Footwear/apparel → use a "Footwear"/"Clothing" custom tag if specific, else "Clothing". Shoe care/polish/laces → "Other". Restaurant food/coffee → "Dining". Fuel → "Gas". Prescription drugs → "Pharmacy".
+
+EXAMPLE 1 — BOGO 50% Off (Skechers-style):
+OCR fragment:
+    197627156231 UNO - SUITED ON AIR $110.00T
+    Style: 183004BLK
+    Size: 8 Color: BLACK
+    BOGO 50% Off Footwear $0.00
+    New Price: $110.00
+    197976255623 ON-THE-GO FLEX - CO $104.99T
+    Style: 138215NVW
+    Size: 8 Color: NVY/WHT ($52.50)
+    BOGO 50% Off Footwear
+    New Price: $52.49
+Correct categoryTags: ["Footwear"]
+Correct items:
+    { "name": "UNO - SUITED ON AIR",    "amount": 110.00, "category": "Footwear" }
+    { "name": "ON-THE-GO FLEX - CO",    "amount": 52.49,  "category": "Footwear" }
+(Items use the CUSTOM "Footwear" tag, not the broader standard "Clothing", because Footwear was picked as a receipt-level tag. One line per shoe. The first shoe's "$0.00" BOGO line is a placeholder; the second shoe's "($52.50)" is the discount, so its net = 104.99 − 52.50 = 52.49 which matches the printed "New Price: $52.49".)
+
+EXAMPLE 2 — Costco multi-category trip with TPD markdown:
+OCR fragment:
+    1420528 VEGGIES PK 4 14.99 H
+    1993379 EKO MIRROR 69.99 H
+    2067431 TPD/1993379 15.00- H
+    313963 KS ORG EGGS 12.49
+Correct categoryTags: ["Groceries", "Home Decor"]
+Correct items:
+    { "name": "VEGGIES PK 4", "amount": 14.99, "category": "Groceries" }
+    { "name": "EKO MIRROR",   "amount": 54.99, "category": "Home Decor" }
+    { "name": "KS ORG EGGS",  "amount": 12.49, "category": "Groceries" }
+(EKO MIRROR uses the custom "Home Decor" tag (the receipt has TWO categoryTags so each item picks the one it belongs to). The TPD/1993379 line is the markdown for SKU 1993379. Net = 69.99 − 15.00 = 54.99. Emit ONE line per product at the net price; do NOT emit the TPD line as a separate item.)
 
 Rules for FIELDS:
 - store: the merchant name, cleaned of OCR garbage characters and casing weirdness.
-- date: format as YYYY-MM-DD if findable, otherwise empty string.
+- date: the transaction date printed on the receipt. ALWAYS look for it — most receipts have one near the top header, the bottom footer, or next to "Date:", "Trans:", "Order:". Format as YYYY-MM-DD. Recognize all of: "2025-08-31", "08/31/2025", "31/08/2025", "2025/08/31", "Aug 31, 2025", "31 Aug 2025". Only return an empty string if NO date appears anywhere on the receipt.
 - subtotal / tax: use null if not present on the receipt. The subtotal is the sum BEFORE tax. The tax is the GST/HST/PST/sales-tax amount. Don't confuse them.
 - total: the grand total the customer paid.
 - categoryTags: 1 to 4 tags for the WHOLE receipt. Each tag MAY be one of the standard categories (${ALL_CATEGORIES.join(', ')}) OR a more specific custom tag like "Pet Food", "Home Decor", "Office Supplies", "Auto Parts", "Baby Care", "Sports Gear", etc. — whatever fits the receipt content best. Keep tags short (1-3 words). For a receipt that spans multiple types of items, include multiple tags.
 
-Allowed categories for individual line items (use EXACTLY one of these, no custom values for items): ${ALL_CATEGORIES.join(', ')}.
-
-Receipt OCR text:
-"""`;
+Allowed categories for individual line items (use EXACTLY one of these, no custom values for items): ${ALL_CATEGORIES.join(', ')}.`;
 
 const RESPONSE_SCHEMA = {
   type: 'object',
@@ -77,10 +134,13 @@ const RESPONSE_SCHEMA = {
         properties: {
           name: { type: 'string' },
           amount: { type: 'number' },
-          category: {
-            type: 'string',
-            enum: ALL_CATEGORIES as unknown as string[],
-          },
+          // Category is a free-form string, not enum-restricted. Items
+          // should ideally use one of the receipt-level categoryTags
+          // (which may include custom labels like "Footwear" or "Pet
+          // Food"), falling back to one of the standard 10 categories.
+          // The prompt enforces this convention; the schema stays open
+          // so custom tags aren't silently dropped by the JSON validator.
+          category: { type: 'string' },
         },
         required: ['name', 'amount', 'category'],
       },
@@ -89,26 +149,67 @@ const RESPONSE_SCHEMA = {
   required: ['store', 'total', 'items'],
 };
 
+/** A prior user-saved correction we can inject as an in-context
+ *  example so Gemini "learns" how the user wants their receipts
+ *  parsed. Provided by lib/database#getRelevantCorrections. */
+export type CorrectionExample = {
+  rawOcr: string;
+  items: Array<{ name: string; amount: number; category?: string }>;
+};
+
+/**
+ * Render up to N prior user-corrections as additional in-context
+ * examples appended to the static prompt. Each example shows the AI
+ * the OCR text the user saw + the final items they actually saved,
+ * which encodes both the merchant-specific layout and the user's
+ * naming/categorization preferences. We cap each example's OCR at
+ * ~1.5KB and skip examples without items.
+ */
+export function formatExamples(examples: CorrectionExample[]): string {
+  const useful = examples.filter((e) => e.items.length > 0).slice(0, 3);
+  if (useful.length === 0) return '';
+  const blocks = useful.map((ex, idx) => {
+    const ocr = ex.rawOcr.slice(0, 1500).trim();
+    const items = ex.items.map((it) => ({
+      name: it.name,
+      amount: it.amount,
+      category: it.category ?? 'Other',
+    }));
+    return `EXAMPLE ${idx + 3} — from this user's prior scan of this store:\nOCR fragment:\n${ocr}\nCorrect items:\n${JSON.stringify(items, null, 2)}`;
+  });
+  return `\n\n${blocks.join('\n\n')}`;
+}
+
 /**
  * Send the OCR text to Gemini 2.5 Flash with a structured-JSON response
  * schema. Gemini extracts a clean { store, date, subtotal, tax, total,
  * items } payload that handles two-column receipts, lowercase tax
  * letters, header noise, postal codes, and other quirks the regex
  * parser struggles with.
+ *
+ * Pass `examples` (typically the user's most recent corrected scans
+ * from the same store) to add few-shot in-context learning — the
+ * model is much more likely to follow the user's preferred item
+ * naming and category assignments after seeing 1-2 worked examples.
  */
 export async function parseReceiptWithGemini(
   rawText: string,
   apiKey: string,
   signal?: AbortSignal,
+  examples: CorrectionExample[] = [],
 ): Promise<GeminiParseResult> {
   if (!apiKey || !rawText.trim()) {
-    return { ok: false, error: 'missing key or text' };
+    return { ok: false, kind: 'no-key', error: 'missing key or text' };
   }
 
   // Cap input at ~8000 chars (~2k tokens) — even the longest receipts
   // fit, and this prevents pathological OCR from eating up tokens.
   const truncated = rawText.length > 8000 ? rawText.slice(0, 8000) : rawText;
-  const prompt = `${PROMPT}\n${truncated}\n"""`;
+  // Splice user-correction examples (if any) BEFORE the OCR block so
+  // the model has seen them as part of its reasoning context when it
+  // gets to the actual receipt.
+  const examplesBlock = formatExamples(examples);
+  const prompt = `${PROMPT}${examplesBlock}\n\nReceipt OCR text:\n"""\n${truncated}\n"""`;
 
   let resp: Response;
   try {
@@ -127,12 +228,28 @@ export async function parseReceiptWithGemini(
       signal,
     });
   } catch (e) {
-    return { ok: false, error: `network: ${(e as Error)?.message ?? 'unknown'}` };
+    return {
+      ok: false,
+      kind: 'network',
+      error: `network: ${(e as Error)?.message ?? 'unknown'}`,
+    };
   }
 
   if (!resp.ok) {
     const body = await resp.text().catch(() => '');
-    return { ok: false, error: `http ${resp.status}: ${body.slice(0, 300)}` };
+    const kind: GeminiErrorKind =
+      resp.status === 429
+        ? 'rate-limited'
+        : resp.status === 401 || resp.status === 403
+          ? 'auth'
+          : resp.status >= 500
+            ? 'server'
+            : 'unknown';
+    return {
+      ok: false,
+      kind,
+      error: `http ${resp.status}: ${body.slice(0, 300)}`,
+    };
   }
 
   let envelope: {
@@ -141,11 +258,15 @@ export async function parseReceiptWithGemini(
   try {
     envelope = await resp.json();
   } catch (e) {
-    return { ok: false, error: `parse envelope: ${(e as Error)?.message}` };
+    return {
+      ok: false,
+      kind: 'parse',
+      error: `parse envelope: ${(e as Error)?.message}`,
+    };
   }
 
   const text = envelope.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) return { ok: false, error: 'empty response' };
+  if (!text) return { ok: false, kind: 'empty', error: 'empty response' };
   return parseGeminiPayload(text);
 }
 
@@ -159,11 +280,15 @@ export function parseGeminiPayload(jsonText: string): GeminiParseResult {
   try {
     raw = JSON.parse(jsonText);
   } catch (e) {
-    return { ok: false, error: `parse json: ${(e as Error)?.message}` };
+    return {
+      ok: false,
+      kind: 'parse',
+      error: `parse json: ${(e as Error)?.message}`,
+    };
   }
   const obj = raw as Record<string, unknown> | null;
   if (!obj || typeof obj !== 'object') {
-    return { ok: false, error: 'reply was not an object' };
+    return { ok: false, kind: 'parse', error: 'reply was not an object' };
   }
 
   const store = typeof obj.store === 'string' ? obj.store.trim() : '';
@@ -180,7 +305,14 @@ export function parseGeminiPayload(jsonText: string): GeminiParseResult {
     const name = typeof i.name === 'string' ? i.name.trim() : '';
     const amount = toFiniteNumber(i.amount);
     if (!name || amount == null) continue;
-    const category = isCategory(i.category) ? (i.category as Category) : 'Other';
+    // Accept ANY non-empty string for item category — most should be
+    // one of the 10 standard categories, but specific custom tags
+    // (e.g. "Footwear", "Pet Food") are now allowed so per-item
+    // categorization stays consistent with the receipt's categoryTags.
+    // Fall back to 'Other' only when the field is missing or blank.
+    const rawCategory =
+      typeof i.category === 'string' ? i.category.trim() : '';
+    const category = rawCategory.length > 0 ? rawCategory : 'Other';
     items.push({
       id: Math.random().toString(36).slice(2, 9),
       name,
@@ -232,17 +364,19 @@ function toFiniteNumber(v: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function isCategory(v: unknown): boolean {
-  return typeof v === 'string' && (ALL_CATEGORIES as readonly string[]).includes(v);
-}
-
 function isoDateOrEmpty(date: string): string {
   if (!date) return new Date().toISOString();
-  // Accept YYYY-MM-DD; tolerate YYYY/MM/DD too. Anything else falls back
-  // to "now" rather than producing an invalid Date downstream.
-  const m = date.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+  // Accept YYYY-MM-DD; tolerate YYYY/MM/DD too. Construct the Date in
+  // LOCAL time so the wall-clock date the user sees on the receipt
+  // survives downstream `format(...)` calls (which use local time).
+  // Using "...T00:00:00.000Z" here would force UTC midnight and
+  // negative-offset users would see the previous day after format().
+  const m = date.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
   if (!m) return new Date().toISOString();
-  const iso = `${m[1]}-${m[2]}-${m[3]}T00:00:00.000Z`;
-  const d = new Date(iso);
+  const d = new Date(
+    parseInt(m[1], 10),
+    parseInt(m[2], 10) - 1,
+    parseInt(m[3], 10),
+  );
   return Number.isFinite(d.getTime()) ? d.toISOString() : new Date().toISOString();
 }

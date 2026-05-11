@@ -215,7 +215,42 @@ const KNOWN_CHAINS = [
   "Macy's", 'Nordstrom', 'H&M', 'Zara', 'Gap', 'Old Navy', 'Uniqlo',
   'Home Depot', "Lowe's", 'Lowes', 'IKEA',
   'Amazon', 'Sephora', 'Ulta',
+  // Footwear / specialty apparel
+  'Skechers', 'Foot Locker', 'Champs Sports', 'DSW', 'Famous Footwear',
+  "Payless", 'Aldo', 'Nine West', 'Nike', 'Adidas', 'New Balance', 'Puma',
+  'Reebok', 'Crocs', 'Vans', 'Converse', 'Timberland', 'UGG',
+  // Other specialty chains
+  'Sport Chek', 'Canadian Tire', 'Bath & Body Works', 'Victoria',
+  "Bed Bath & Beyond", "Marshalls", 'Winners', 'HomeSense', 'TJ Maxx',
+  'Ross', 'Burlington', 'Dollar Tree', 'Dollarama', 'Costco Wholesale',
 ] as const;
+
+/**
+ * Build a Date for the given YYYY-MM-DD components in LOCAL time.
+ *
+ * Why this exists: `new Date("2025-08-31")` is parsed as UTC midnight,
+ * so users in a negative-offset timezone (EDT = UTC-4) who format that
+ * back as "yyyy-MM-dd" in local time get "2025-08-30" — a wall-clock
+ * date one day earlier than what was on the receipt. By constructing
+ * the Date with the (y, m, d) ctor — which uses local time — round-
+ * trips through `.toISOString()` + local-time `format(...)` preserve
+ * the wall-clock date the user actually saw on the receipt.
+ *
+ * Use this anywhere a YYYY-MM-DD string becomes a Date for storage
+ * or display.
+ */
+export function parseYmdLocal(s: string): Date | null {
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|[T\s])/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) {
+    return null;
+  }
+  const date = new Date(y, mo - 1, d);
+  return isNaN(date.getTime()) ? null : date;
+}
 
 function escapeRe(s: string): string {
   return s.replace(/[.+*?^$()[\]{}|\\]/g, '\\$&');
@@ -237,6 +272,27 @@ function extractStoreName(lines: string[]): string {
     /^[\d\s\-#]+$/,                                               // only numbers
     /^(option|return|shift|control|command|enter|backspace|delete|tab|space|escape|caps\s*lock)$/i, // keyboard keys
     /^(open|close|save|cancel|edit|done|next|back)$/i,           // generic UI buttons
+    // Promo banner lines — these often appear above (or instead of)
+    // the merchant name when the user crops the photo. They must NOT
+    // become the storeName. We're permissive with OCR mangling:
+    // "BOGU"/"BOGD" for BOGO, "DO%" for 50%, "0ff" for Off.
+    /\*+/,                                                        // any line containing *** wrappers
+    /\bbog[a-z]\b/i,                                              // BOGO / BOGU / BOGD
+    /\b\d{1,2}\s*%\s*o?ff\b/i,                                    // "50% off", "50% Off"
+    /\b[dD0Oo]{1,2}\s*%\s*[o0]ff\b/i,                             // OCR-mangled "DO% 0ff"
+    /\b(sale|special|clearance|discount|promo|promotion|deal)\b/i,
+    /\bbuy\s+\d+\s+get\b/i,                                       // "Buy 1 Get 1"
+    /\bsave\s+\$?\d/i,                                            // "Save $10"
+    /\boff\s+(footwear|apparel|everything|all)\b/i,
+    /\bfree\s+(shipping|delivery|item)\b/i,
+    // Item / totals rows — these always have a dollar price somewhere.
+    // The store name never has a price on the same line, so any line
+    // with a $X.XX or trailing tax-flag price disqualifies it.
+    /\$\s*\d+\.\d{2}/,
+    /\d+\.\d{2}\s*[A-Za-z]?\s*$/,
+    // Lines that start with a long numeric SKU/UPC (Costco / Skechers
+    // / Best Buy item rows). These clearly aren't store-name headers.
+    /^\s*\d{6,}\s+/,
   ];
 
   for (const line of lines.slice(0, 6)) {
@@ -273,41 +329,90 @@ function cleanStoreName(raw: string): string {
 }
 
 function extractDate(text: string): string {
-  // Ordered by specificity — try most specific formats first
-  const matchers: Array<(t: string) => Date | null> = [
-    // YYYY-MM-DD
-    (t) => {
-      const m = t.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
-      return m ? new Date(`${m[1]}-${m[2]}-${m[3]}`) : null;
-    },
-    // MM/DD/YYYY or MM-DD-YYYY
-    (t) => {
-      const m = t.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/);
-      return m ? new Date(`${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`) : null;
-    },
-    // Month DD, YYYY  e.g. "May 8, 2026"
-    (t) => {
-      const m = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b/i);
-      return m ? new Date(`${m[1]} ${m[2]} ${m[3]}`) : null;
-    },
-    // DD Month YYYY  e.g. "8 May 2026"
-    (t) => {
-      const m = t.match(/\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})\b/i);
-      return m ? new Date(`${m[2]} ${m[1]} ${m[3]}`) : null;
-    },
-    // MM/DD/YY
-    (t) => {
-      const m = t.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2})\b/);
-      return m ? new Date(`20${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`) : null;
-    },
-  ];
+  // Ordered by specificity — try most specific formats first.
+  // Each matcher scans the WHOLE OCR text and may produce multiple
+  // hits; we keep all valid candidates and pick the most plausible
+  // one at the end (closest to today, not in the future, not absurdly
+  // old). This avoids accidentally locking onto an address number or
+  // a "Date of birth" / "Valid until" date on the receipt footer.
+  const candidates: Date[] = [];
+
+  // All candidate construction goes through local-time so that
+  // round-trips through `.toISOString()` + local-time `format(...)`
+  // preserve the wall-clock date that appeared on the receipt. See
+  // parseYmdLocal for the explanation.
+  const MONTHS: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  };
+  const tryAdd = (d: Date | null) => {
+    if (!d) return;
+    if (isNaN(d.getTime())) return;
+    if (d.getFullYear() < 2000) return;
+    candidates.push(d);
+  };
+  const addYmd = (y: number, mo: number, d: number) => {
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return;
+    tryAdd(new Date(y, mo - 1, d));
+  };
+
+  // YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD (ISO and ISO-like)
+  for (const m of text.matchAll(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/g)) {
+    addYmd(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10));
+  }
+  // MM/DD/YYYY or MM-DD-YYYY (North American)
+  for (const m of text.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/g)) {
+    const mm = parseInt(m[1], 10);
+    const dd = parseInt(m[2], 10);
+    const yyyy = parseInt(m[3], 10);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      addYmd(yyyy, mm, dd);
+    }
+    // DD/MM/YYYY (European) — only when first number can't be a month.
+    if (mm > 12 && dd >= 1 && dd <= 12) {
+      addYmd(yyyy, dd, mm);
+    }
+  }
+  // Month DD, YYYY  e.g. "May 8, 2026"
+  for (const m of text.matchAll(
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b/gi,
+  )) {
+    const mo = MONTHS[m[1].slice(0, 3).toLowerCase()];
+    if (mo) addYmd(parseInt(m[3], 10), mo, parseInt(m[2], 10));
+  }
+  // DD Month YYYY  e.g. "8 May 2026"
+  for (const m of text.matchAll(
+    /\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})\b/gi,
+  )) {
+    const mo = MONTHS[m[2].slice(0, 3).toLowerCase()];
+    if (mo) addYmd(parseInt(m[3], 10), mo, parseInt(m[1], 10));
+  }
+  // MM/DD/YY (2-digit year) — only when not already in 4-digit form.
+  for (const m of text.matchAll(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2})(?!\d)\b/g)) {
+    const mm = parseInt(m[1], 10);
+    const dd = parseInt(m[2], 10);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      addYmd(2000 + parseInt(m[3], 10), mm, dd);
+    }
+  }
 
   const now = new Date();
-  for (const matcher of matchers) {
-    const d = matcher(text);
-    if (d && !isNaN(d.getTime()) && d.getFullYear() >= 2000 && d <= now) {
-      return d.toISOString();
-    }
+  // Allow up to 1 day in the future to absorb timezone slop.
+  const futureCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  // Filter to plausible receipt dates: not in the future, not more
+  // than ~10 years old (we don't expect users to scan receipts from
+  // 2010).
+  const minYear = now.getFullYear() - 10;
+  const plausible = candidates.filter(
+    (d) => d <= futureCutoff && d.getFullYear() >= minYear,
+  );
+  if (plausible.length > 0) {
+    // Pick the LATEST plausible date — most receipts print one
+    // transaction date, but if a footer accidentally has a "valid
+    // until" or an older imprinted date, the transaction date is
+    // almost always the most recent one.
+    plausible.sort((a, b) => b.getTime() - a.getTime());
+    return plausible[0].toISOString();
   }
 
   return now.toISOString();
@@ -422,8 +527,21 @@ const SKIP_LINE_RE = new RegExp(
     '\\bp\\s*\\(?h\\)?\\s*hst\\b',       // tax-rate label "P (H)HST"
     '\\bp\\s*chdhst\\b',                 // OCR variant of P (H)HST
     '\\bitems?\\s+sold\\b',
+    '\\bitems?\\s+returned\\b',
+    '\\byou\\s+saved\\b',                // "You Saved $52.50" (Skechers)
+    '\\bnew\\s+price\\b',                // "New Price: $110.00" — summary, not an item
+    '\\bbogo\\b',                        // "BOGO 50% Off Footwear" promo banner
+    '\\bstyle\\s*:',                     // "Style: 183004BLK" — item metadata
+    '\\b(?:size|color|colour)\\s*:',     // "Size: 8 Color: BLACK" metadata
+    '\\b(?:assoc|reg|tran|seq(?:uence)?)\\s*(?:no|num(?:ber)?|#)?\\s*:?\\s*\\d',
+    '\\b(application\\s+(?:cryptogram|preferred|label)|response\\s+code|arc|tvr|iad|tsi|aci|iso)\\b',
+    '\\bsequence\\s+number\\b',
+    '\\bverified\\s+by\\s+pin\\b',
+    '\\bapproval\\s+code\\b',
+    '^\\s*sale\\s*$',                    // bare "SALE" banner line
     '^\\s*\\*+\\s*$',                    // separator "*****"
     '^\\s*-+\\s*$',                      // separator "------"
+    '^\\s*=+\\s*$',                      // separator "======"
     '^\\s*x{4,}[\\s\\d]*\\d{2,}\\s*$',   // masked card "XXXXXXXXXXXX0933"
     '^\\s*[A-Z]\\d[A-Z]\\s+\\d[A-Z]\\d\\s*$',
     '^\\s*\\d{5}(?:-\\d{4})?\\s*$',
@@ -437,11 +555,17 @@ const SKIP_LINE_RE = new RegExp(
 // etc.). It's printed as uppercase but real OCR routinely returns lowercase
 // for it (the user hit "5.00 d" being treated as a name instead of a
 // price), so we accept either case.
-// Trailing `-` (e.g. "15.00-") is how Costco / many warehouse chains
-// mark a discount/markdown amount. Leading `-` is the more standard
-// notation. Capture either so discount lines parse as negative amounts.
-const PRICE_AT_END_RE = /\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*$/;
-const PRICE_ONLY_RE = /^\s*\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*$/;
+// Negative-amount notations the parser must recognize:
+//   "15.00-"   — Costco / many warehouse chains
+//   "-15.00"   — generic
+//   "($15.00)" — Skechers / accounting-style parentheses
+// We capture the open-paren, leading minus, the number, and trailing
+// minus / status letter / close-paren together so any of these forms
+// produces a negative amount in the consumer.
+const PRICE_AT_END_RE =
+  /(\()?\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*(\))?\s*$/;
+const PRICE_ONLY_RE =
+  /^\s*(\()?\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*(\))?\s*$/;
 const UPC_ONLY_RE = /^\s*\d{8,14}\s*$/;
 const ALPHA_RE = /[a-z]/i;
 
@@ -490,12 +614,35 @@ function extractInlineItems(
 ): LineItem[] {
   const items: LineItem[] = [];
   for (const line of lines) {
-    if (skipRe.test(line)) continue;
+    // Before skipping noise lines, check whether this line buries a
+    // parenthesized DISCOUNT amount inside metadata (e.g. Skechers'
+    // "Size: 8 Color: NVY/WHT ($52.50)" pattern). We emit it as a
+    // standalone negative item so mergeDiscountLines folds it into
+    // the preceding positive item by adjacency.
+    if (skipRe.test(line)) {
+      const parenDiscount = line.match(/\((?:\$)?\s*(\d{1,5}\.\d{2})\s*\)\s*$/);
+      if (parenDiscount) {
+        const mag = parseFloat(parenDiscount[1]);
+        if (Number.isFinite(mag) && mag > 0) {
+          items.push({
+            id: Math.random().toString(36).slice(2, 9),
+            name: 'Discount',
+            amount: -mag,
+            category: 'Other',
+          });
+        }
+      }
+      continue;
+    }
     const priceMatch = line.match(priceRe);
     if (!priceMatch) continue;
-    // priceMatch groups: 1=leading-minus, 2=number, 3=trailing-minus, 4=letter
-    const negative = priceMatch[1] === '-' || priceMatch[3] === '-';
-    const magnitude = parseFloat(priceMatch[2]);
+    // priceMatch groups: 1=open-paren, 2=leading-minus, 3=number,
+    // 4=trailing-minus, 5=letter, 6=close-paren. Any of paren-pair,
+    // leading-minus, or trailing-minus marks the amount as negative.
+    const parenthesized = priceMatch[1] === '(' && priceMatch[6] === ')';
+    const negative =
+      parenthesized || priceMatch[2] === '-' || priceMatch[4] === '-';
+    const magnitude = parseFloat(priceMatch[3]);
     if (!Number.isFinite(magnitude) || magnitude >= 10_000) continue;
     if (magnitude === 0) continue;
     const amount = negative ? -magnitude : magnitude;
@@ -565,6 +712,22 @@ function extractPairedItems(
       // we've passed the items block so we stop buffering footer-style
       // names below.
       if (totalsTriggerRe.test(line)) pastTotalsBlock = true;
+      // Rescue any parenthesized DISCOUNT buried inside this metadata
+      // line (Skechers' "Size: 8 Color: NVY/WHT ($52.50)") — emit it
+      // as a standalone negative item so mergeDiscountLines absorbs
+      // it into the preceding positive item.
+      const parenDiscount = line.match(/\((?:\$)?\s*(\d{1,5}\.\d{2})\s*\)\s*$/);
+      if (parenDiscount && !pastTotalsBlock) {
+        const mag = parseFloat(parenDiscount[1]);
+        if (Number.isFinite(mag) && mag > 0) {
+          items.push({
+            id: Math.random().toString(36).slice(2, 9),
+            name: 'Discount',
+            amount: -mag,
+            category: 'Other',
+          });
+        }
+      }
       continue;
     }
     if (!inItemsBlock) {
@@ -576,9 +739,12 @@ function extractPairedItems(
     // Inline match — emit immediately and don't buffer.
     const inline = line.match(re.priceAtEndRe);
     if (inline) {
-      // Groups: 1=leading-minus, 2=number, 3=trailing-minus, 4=letter.
-      const negative = inline[1] === '-' || inline[3] === '-';
-      const magnitude = parseFloat(inline[2]);
+      // Groups: 1=open-paren, 2=leading-minus, 3=number,
+      // 4=trailing-minus, 5=letter, 6=close-paren.
+      const parenthesized = inline[1] === '(' && inline[6] === ')';
+      const negative =
+        parenthesized || inline[2] === '-' || inline[4] === '-';
+      const magnitude = parseFloat(inline[3]);
       if (!Number.isFinite(magnitude) || magnitude >= 10_000 || magnitude === 0)
         continue;
       const amount = negative ? -magnitude : magnitude;
@@ -608,8 +774,10 @@ function extractPairedItems(
     // Price-only line.
     const priceOnly = line.match(re.priceOnlyRe);
     if (priceOnly) {
-      const negative = priceOnly[1] === '-' || priceOnly[3] === '-';
-      const magnitude = parseFloat(priceOnly[2]);
+      const parenthesized = priceOnly[1] === '(' && priceOnly[6] === ')';
+      const negative =
+        parenthesized || priceOnly[2] === '-' || priceOnly[4] === '-';
+      const magnitude = parseFloat(priceOnly[3]);
       const amount = negative ? -magnitude : magnitude;
       if (
         magnitude > 0 &&

@@ -111,9 +111,16 @@ export default function DashboardScreen() {
         <SpendingChart
           data={stats.categories}
           onCategoryPress={(category) => {
+            // Pass the active month so the drilldown shows ONLY the
+            // receipts contributing to this month's breakdown bar,
+            // not a global cross-month total.
             router.push({
               pathname: '/category-detail',
-              params: { category },
+              params: {
+                category,
+                year: String(activeMonth.getFullYear()),
+                month: String(activeMonth.getMonth() + 1),
+              },
             } as never);
           }}
         />

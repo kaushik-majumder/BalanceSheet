@@ -23,6 +23,7 @@ import {
   replaceLineItems,
 } from '../../lib/database';
 import { refineUncategorizedItems } from '../../lib/itemClassifier';
+import { parseYmdLocal } from '../../lib/parser';
 import { Receipt, Category, LineItem } from '../../types';
 import { theme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
@@ -77,6 +78,12 @@ export default function EditReceiptScreen() {
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState<LineItem[]>([]);
   const [editingItem, setEditingItem] = useState<LineItem | null>(null);
+  // Multi-select mode for bulk recategorization. When set is empty
+  // we render the normal "tap to edit" UI; once at least one item is
+  // selected, taps toggle selection and a bottom action bar appears.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkCategoryPicker, setShowBulkCategoryPicker] = useState(false);
+  const selectionMode = selectedIds.size > 0;
 
   useEffect(() => {
     if (!id) return;
@@ -129,13 +136,9 @@ export default function EditReceiptScreen() {
       return;
     }
 
-    let parsedDate: Date;
-    try {
-      parsedDate = new Date(date);
-      if (isNaN(parsedDate.getTime())) parsedDate = new Date(receipt.date);
-    } catch {
-      parsedDate = new Date(receipt.date);
-    }
+    // Parse the user-typed YYYY-MM-DD as LOCAL time so the wall-clock
+    // date the user sees survives the save → reload round-trip.
+    const parsedDate: Date = parseYmdLocal(date) ?? new Date(receipt.date);
 
     setSaving(true);
     try {
@@ -196,10 +199,49 @@ export default function EditReceiptScreen() {
     );
   }
 
+  const applyBulkCategory = (category: Category | string) => {
+    if (!receipt || selectedIds.size === 0) return;
+    const next = items.map((it) =>
+      selectedIds.has(it.id) ? { ...it, category } : it,
+    );
+    setItems(next);
+    // Keep the receipt-level Categories field in sync — if the user
+    // bulk-tags items as a category that isn't already in the chip
+    // list, add it. This makes the items section and the Categories
+    // section render the same set of tags.
+    if (!categoryTags.includes(category)) {
+      setCategoryTags([...categoryTags, category]);
+    }
+    setSelectedIds(new Set());
+    setShowBulkCategoryPicker(false);
+    replaceLineItems(receipt.id, next).catch(() => {
+      Alert.alert(
+        'Could not save',
+        'The category changes were not persisted. Try again.',
+      );
+    });
+  };
+
+  // Track the custom-tag input shown inside the bulk picker so users
+  // can add a brand new tag (e.g. "Garden Supplies") without leaving
+  // the sheet. Submitting applies the tag immediately AND adds it to
+  // the receipt-level categoryTags list via applyBulkCategory.
+  const [bulkCustomTag, setBulkCustomTag] = useState('');
+  const submitBulkCustomTag = () => {
+    const trimmed = bulkCustomTag.trim().slice(0, 32);
+    if (!trimmed) return;
+    setBulkCustomTag('');
+    applyBulkCategory(trimmed);
+  };
+
   return (
+    <View style={styles.screen}>
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        selectionMode && { paddingBottom: 100 },
+      ]}
       keyboardShouldPersistTaps="handled"
     >
       {/* Receipt image */}
@@ -284,12 +326,37 @@ export default function EditReceiptScreen() {
       </Card>
 
       {/* Line items grouped by category, with tax + total. Tap any
-          row to fix name/amount/category or delete it. */}
+          row to fix name/amount/category or delete it. Long-press
+          (or tap "Select") to enter multi-select mode, then tap rows
+          to toggle and use the bottom bar to bulk-recategorize. */}
       {items.length > 0 && (
         <Card style={styles.fieldCard}>
           <View style={styles.itemsCardHeader}>
-            <Text style={styles.fieldLabel}>Items ({items.length})</Text>
-            <Text style={styles.tapHint}>Tap to edit</Text>
+            <Text style={styles.fieldLabel}>
+              {selectionMode
+                ? `${selectedIds.size} selected`
+                : `Items (${items.length})`}
+            </Text>
+            {selectionMode ? (
+              <TouchableOpacity onPress={() => setSelectedIds(new Set())} hitSlop={8}>
+                <Text style={[styles.tapHint, { color: theme.colors.primary }]}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                onPress={() => {
+                  if (items.length > 0) {
+                    setSelectedIds(new Set([items[0].id]));
+                  }
+                }}
+                hitSlop={8}
+              >
+                <Text style={[styles.tapHint, { color: theme.colors.primary }]}>
+                  Select
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
           {groupItemsByCategory(items, receipt.category).map((group) => (
             <View key={group.category} style={styles.categoryGroup}>
@@ -299,19 +366,53 @@ export default function EditReceiptScreen() {
                   ${group.subtotal.toFixed(2)}
                 </Text>
               </View>
-              {group.items.map((item) => (
-                <TouchableOpacity
-                  key={item.id}
-                  onPress={() => setEditingItem(item)}
-                  style={styles.lineItemRow}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.lineItemName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.lineItemAmount}>${item.amount.toFixed(2)}</Text>
-                </TouchableOpacity>
-              ))}
+              {group.items.map((item) => {
+                const isSelected = selectedIds.has(item.id);
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    onPress={() => {
+                      if (selectionMode) {
+                        const next = new Set(selectedIds);
+                        if (next.has(item.id)) next.delete(item.id);
+                        else next.add(item.id);
+                        setSelectedIds(next);
+                      } else {
+                        setEditingItem(item);
+                      }
+                    }}
+                    onLongPress={() => {
+                      const next = new Set(selectedIds);
+                      next.add(item.id);
+                      setSelectedIds(next);
+                    }}
+                    style={[
+                      styles.lineItemRow,
+                      isSelected && styles.lineItemRowSelected,
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    {selectionMode && (
+                      <Ionicons
+                        name={isSelected ? 'checkbox' : 'square-outline'}
+                        size={20}
+                        color={
+                          isSelected
+                            ? theme.colors.primary
+                            : theme.colors.textMuted
+                        }
+                        style={{ marginRight: 10 }}
+                      />
+                    )}
+                    <Text style={styles.lineItemName} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    <Text style={styles.lineItemAmount}>
+                      ${item.amount.toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           ))}
 
@@ -425,6 +526,85 @@ export default function EditReceiptScreen() {
         }}
       />
     </ScrollView>
+
+    {selectionMode && (
+      <View style={styles.bulkBar}>
+        <Text style={styles.bulkBarLabel}>
+          {selectedIds.size} item{selectedIds.size === 1 ? '' : 's'} selected
+        </Text>
+        <TouchableOpacity
+          onPress={() => setShowBulkCategoryPicker(true)}
+          style={styles.bulkBarPrimary}
+        >
+          <Ionicons name="pricetags-outline" size={16} color="#fff" />
+          <Text style={styles.bulkBarPrimaryText}>Set category</Text>
+        </TouchableOpacity>
+      </View>
+    )}
+
+    <Modal
+      visible={showBulkCategoryPicker}
+      animationType="slide"
+      transparent
+      onRequestClose={() => setShowBulkCategoryPicker(false)}
+    >
+      <Pressable
+        style={styles.bulkPickerBackdrop}
+        onPress={() => setShowBulkCategoryPicker(false)}
+      >
+        <Pressable style={styles.bulkPickerSheet} onPress={() => {}}>
+          <Text style={styles.bulkPickerTitle}>
+            Tag {selectedIds.size} item{selectedIds.size === 1 ? '' : 's'} as
+          </Text>
+          <View style={styles.bulkPickerGrid}>
+            {[
+              ...ALL_CATEGORIES,
+              // Surface receipt-level custom tags too so users can bulk-
+              // assign to a tag they've already added (e.g. "Gym",
+              // "Pet Food"). De-dupe against the standard set.
+              ...categoryTags.filter(
+                (t) => !(ALL_CATEGORIES as readonly string[]).includes(t),
+              ),
+            ].map((c) => (
+              <TouchableOpacity
+                key={c}
+                onPress={() => applyBulkCategory(c)}
+                style={styles.bulkPickerOption}
+              >
+                <TagChip tag={c} size="md" />
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={styles.bulkPickerCustomLabel}>Or add a new tag</Text>
+          <View style={styles.bulkPickerCustomRow}>
+            <TextInput
+              value={bulkCustomTag}
+              onChangeText={setBulkCustomTag}
+              placeholder="Garden Supplies"
+              placeholderTextColor={theme.colors.textMuted}
+              autoCapitalize="words"
+              autoCorrect={false}
+              returnKeyType="done"
+              onSubmitEditing={submitBulkCustomTag}
+              maxLength={32}
+              style={styles.bulkPickerCustomInput}
+            />
+            <TouchableOpacity
+              onPress={submitBulkCustomTag}
+              disabled={!bulkCustomTag.trim()}
+              style={[
+                styles.bulkPickerCustomBtn,
+                !bulkCustomTag.trim() && { opacity: 0.4 },
+              ]}
+            >
+              <Text style={styles.bulkPickerCustomBtnText}>Apply</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+    </View>
   );
 }
 
@@ -632,5 +812,106 @@ const styles = StyleSheet.create({
   },
   deleteBtn: {
     marginTop: theme.spacing.xs,
+  },
+  lineItemRowSelected: {
+    backgroundColor: `${theme.colors.primary}1A`,
+    borderRadius: theme.radius.sm,
+  },
+  bulkBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.md,
+    paddingBottom: theme.spacing.lg,
+    backgroundColor: theme.colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  bulkBarLabel: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    fontWeight: '600',
+  },
+  bulkBarPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 10,
+    borderRadius: theme.radius.full,
+  },
+  bulkBarPrimaryText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: theme.font.sm,
+  },
+  bulkPickerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  bulkPickerSheet: {
+    backgroundColor: theme.colors.surface,
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.lg,
+    paddingBottom: theme.spacing.xxl,
+    borderTopLeftRadius: theme.radius.xl,
+    borderTopRightRadius: theme.radius.xl,
+  },
+  bulkPickerTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.lg,
+    fontWeight: '700',
+    marginBottom: theme.spacing.md,
+  },
+  bulkPickerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  bulkPickerOption: {
+    // TagChip handles its own padding; no wrapper styling needed
+  },
+  bulkPickerCustomLabel: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.xs,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginTop: theme.spacing.lg,
+    marginBottom: theme.spacing.xs,
+  },
+  bulkPickerCustomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  bulkPickerCustomInput: {
+    flex: 1,
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.md,
+    backgroundColor: theme.colors.surfaceHigh,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  bulkPickerCustomBtn: {
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: theme.radius.sm,
+  },
+  bulkPickerCustomBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: theme.font.sm,
   },
 });
