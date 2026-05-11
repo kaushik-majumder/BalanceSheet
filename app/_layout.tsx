@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { initDatabase } from '../lib/database';
 import { ThemeProvider, useTheme } from '../constants/theme';
 import { AuthProvider, useAuth } from '../lib/AuthContext';
+import { ToastProvider } from '../components/ui/Toast';
 import { pickTarget, targetToHref } from '../lib/routeGuard';
 
 export default function RootLayout() {
@@ -17,10 +18,12 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AuthProvider>
-          <ThemedStatusBar />
-          <RootStack />
-        </AuthProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <ThemedStatusBar />
+            <RootStack />
+          </AuthProvider>
+        </ToastProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

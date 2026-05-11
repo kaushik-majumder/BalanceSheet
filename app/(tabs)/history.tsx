@@ -17,6 +17,7 @@ import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ReceiptListSkeleton } from '../../components/ui/Skeleton';
+import { useToast } from '../../components/ui/Toast';
 import { receiptMatchesCategory } from '../../lib/receiptFilter';
 
 const FILTER_ALL = 'All' as const;
@@ -113,6 +114,7 @@ export default function HistoryScreen() {
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<Filter>(FILTER_ALL);
   const params = useLocalSearchParams<{ category?: string }>();
+  const toast = useToast();
 
   // When the dashboard navigates here with `?category=X`, pre-select X
   // as the filter. Re-fires whenever a fresh navigation arrives.
@@ -167,17 +169,29 @@ export default function HistoryScreen() {
   };
 
   const handleDelete = (id: string) => {
-    Alert.alert('Delete Receipt', 'Are you sure you want to delete this receipt?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteReceipt(id);
-          await load();
-        },
+    const target = receipts.find((r) => r.id === id);
+    if (!target) return;
+    // Optimistically remove from the list so the user sees instant
+    // feedback. Defer the actual DB delete by 5 seconds so they can
+    // tap Undo on the toast before it lands.
+    setReceipts((prev) => prev.filter((r) => r.id !== id));
+    const timer = setTimeout(() => {
+      deleteReceipt(id).catch(() => {
+        // If the eventual delete failed, refetch so the UI matches
+        // reality.
+        load();
+      });
+    }, 5000);
+    toast.show({
+      message: `Deleted ${target.storeName}`,
+      kind: 'success',
+      undoLabel: 'Undo',
+      onUndo: () => {
+        clearTimeout(timer);
+        load(); // restore from DB (it was never actually deleted)
       },
-    ]);
+      durationMs: 5000,
+    });
   };
 
   // A receipt matches the active filter when EITHER:

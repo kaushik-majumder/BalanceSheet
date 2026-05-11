@@ -18,6 +18,7 @@ import { StatsRow } from '../../components/dashboard/StatsRow';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
 import { Card } from '../../components/ui/Card';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { useToast } from '../../components/ui/Toast';
 import { computeStats } from '../../lib/dashboardStats';
 
 export default function DashboardScreen() {
@@ -113,6 +114,7 @@ export default function DashboardScreen() {
     },
   }));
   const [activeMonth, setActiveMonth] = useState(new Date());
+  const toast = useToast();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [stats, setStats] = useState<MonthlyStats>({
     totalSpent: 0,
@@ -144,9 +146,25 @@ export default function DashboardScreen() {
     setRefreshing(false);
   };
 
-  const handleDelete = async (id: string) => {
-    await deleteReceipt(id);
-    await load();
+  const handleDelete = (id: string) => {
+    const target = receipts.find((r) => r.id === id);
+    if (!target) return;
+    // Optimistically remove from the list; defer DB delete 5s so the
+    // user can tap Undo on the toast first.
+    setReceipts((prev) => prev.filter((r) => r.id !== id));
+    const timer = setTimeout(() => {
+      deleteReceipt(id).then(load).catch(() => load());
+    }, 5000);
+    toast.show({
+      message: `Deleted ${target.storeName}`,
+      kind: 'success',
+      undoLabel: 'Undo',
+      onUndo: () => {
+        clearTimeout(timer);
+        load();
+      },
+      durationMs: 5000,
+    });
   };
 
   const recentReceipts = receipts.slice(0, 5);
