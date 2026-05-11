@@ -61,6 +61,46 @@ export type TopStore = {
   count: number;
 };
 
+export type CategoryTrendPoint = {
+  key: string;
+  shortLabel: string;
+  total: number;
+};
+
+export type CategoryTrend = {
+  category: Category | string;
+  /** Monthly bucket totals for this category, oldest → newest. */
+  points: CategoryTrendPoint[];
+  /** Sum across all points in the window. */
+  windowTotal: number;
+  /** Last point's total. */
+  thisMonth: number;
+  /** Second-to-last point's total. */
+  prevMonth: number;
+  /** thisMonth - prevMonth. */
+  delta: number;
+};
+
+export type RecurringMatch = {
+  /** Normalized label — store name for store-level matches, lowercase
+   *  cleaned name for item-level matches. */
+  label: string;
+  /** "store" → this merchant appears across multiple months.
+   *  "item" → the same item name appears across multiple months. */
+  kind: 'store' | 'item';
+  /** Distinct month keys ("2026-04", "2026-05", …) the match was
+   *  observed in. */
+  monthKeys: string[];
+  /** Number of times observed across all months (not unique months). */
+  occurrences: number;
+  /** Sum of amounts (item amounts for kind='item', receipt totals for
+   *  kind='store') across all occurrences. */
+  total: number;
+  /** Sample human-readable name to show in the UI — the most recent
+   *  full label seen (preserves original casing). */
+  displayName: string;
+};
+
 const MONTH_SHORT = [
   'Jan',
   'Feb',
@@ -273,4 +313,283 @@ export function topStores(
       return a.storeName.localeCompare(b.storeName);
     })
     .slice(0, limit);
+}
+
+/**
+ * Per-category trend: for the top N categories across the window,
+ * return the monthly time series so the UI can render a sparkline or
+ * mini bar chart and a "this vs last month" delta.
+ *
+ * The N categories are chosen by total spend in the window, so a
+ * tiny once-off category doesn't crowd out a frequently used one.
+ */
+export function categoryTrends(
+  receipts: Receipt[],
+  year: number,
+  month: number,
+  monthsBack = 6,
+  topN = 4,
+): CategoryTrend[] {
+  // Pre-compute the month-key window so each category aggregator
+  // sees the same buckets in the same order.
+  const windowKeys: Array<{ key: string; shortLabel: string }> = [];
+  for (let i = monthsBack - 1; i >= 0; i--) {
+    const d = new Date(year, month - 1 - i, 1);
+    windowKeys.push({
+      key: monthKey(d.getFullYear(), d.getMonth() + 1),
+      shortLabel: MONTH_SHORT[d.getMonth()],
+    });
+  }
+  const windowKeySet = new Set(windowKeys.map((w) => w.key));
+
+  // For each (category, month-key), sum signed item amounts.
+  const grid = new Map<string, Map<string, number>>();
+  const categoryTotalsAll = new Map<string, number>();
+  for (const r of receipts) {
+    const { year: ry, month: rm } = getReceiptYearMonth(r);
+    const rKey = monthKey(ry, rm);
+    if (!windowKeySet.has(rKey)) continue;
+    const contribute = (cat: string, amount: number) => {
+      if (!grid.has(cat)) grid.set(cat, new Map());
+      const inner = grid.get(cat)!;
+      inner.set(rKey, (inner.get(rKey) ?? 0) + amount);
+      categoryTotalsAll.set(cat, (categoryTotalsAll.get(cat) ?? 0) + amount);
+    };
+    if (r.lineItems && r.lineItems.length > 0) {
+      for (const it of r.lineItems) {
+        const cat = (it.category ?? r.category) as string;
+        contribute(cat, it.amount);
+      }
+    } else {
+      contribute(r.category as string, r.totalAmount);
+    }
+  }
+
+  // Rank categories by their total in the window, take top N.
+  const topCategories = Array.from(categoryTotalsAll.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([cat]) => cat);
+
+  return topCategories.map((cat) => {
+    const inner = grid.get(cat) ?? new Map();
+    const points: CategoryTrendPoint[] = windowKeys.map(({ key, shortLabel }) => ({
+      key,
+      shortLabel,
+      total: inner.get(key) ?? 0,
+    }));
+    const windowTotal = points.reduce((s, p) => s + p.total, 0);
+    const thisMonth = points[points.length - 1]?.total ?? 0;
+    const prevMonth = points[points.length - 2]?.total ?? 0;
+    return {
+      category: cat,
+      points,
+      windowTotal,
+      thisMonth,
+      prevMonth,
+      delta: thisMonth - prevMonth,
+    };
+  });
+}
+
+/** Normalize an item name for recurring detection. Strips common
+ *  variants so "ORG MILK 2%" and "ORG MILK 1%" can group together
+ *  by store-level recurrence even with slight wording differences. */
+function normalizeItemName(name: string): string {
+  return name
+    .toLowerCase()
+    // Strip qty/weight + percentages FIRST, while their markers
+    // (%, lb, kg, etc.) are still present in the string. A later
+    // punctuation pass would remove the symbols, defeating these
+    // patterns, so order matters here.
+    .replace(/\b\d+(?:\.\d+)?\s*%/g, ' ')
+    .replace(
+      /\b\d+(?:\.\d+)?\s*(?:lb|oz|kg|g|ml|l|ct|pk|pack|count)\b/g,
+      ' ',
+    )
+    .replace(/[^a-z0-9 ]+/g, ' ') // drop remaining punctuation
+    .replace(/\b\d+(?:\.\d+)?\b/g, ' ') // bare numbers (sizes etc.)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Detect items/stores that recur across multiple months — subscriptions,
+ * regular fuel runs, weekly grocery staples, etc.
+ *
+ * A match must appear in ≥ `minMonths` distinct calendar months within
+ * the receipts list. Stores are matched by storeName; items are matched
+ * by the normalized name (case-insensitive, weight/qty stripped) AND
+ * must always come from the same store, to avoid coincidental name
+ * collisions across merchants.
+ *
+ * Sorted by (most months seen) desc, then total spend desc.
+ */
+export function findRecurring(
+  receipts: Receipt[],
+  minMonths = 3,
+): RecurringMatch[] {
+  // Store-level recurrence.
+  const storeAcc = new Map<
+    string,
+    {
+      displayName: string;
+      months: Set<string>;
+      occurrences: number;
+      total: number;
+    }
+  >();
+  // Item-level recurrence — key is "store|normalizedItemName".
+  const itemAcc = new Map<
+    string,
+    {
+      displayName: string;
+      months: Set<string>;
+      occurrences: number;
+      total: number;
+    }
+  >();
+
+  for (const r of receipts) {
+    const storeKey = r.storeName.trim().toLowerCase() || 'unknown store';
+    const displayStore = r.storeName.trim() || 'Unknown Store';
+    const { year, month } = getReceiptYearMonth(r);
+    const mKey = monthKey(year, month);
+
+    const sEntry = storeAcc.get(storeKey) ?? {
+      displayName: displayStore,
+      months: new Set<string>(),
+      occurrences: 0,
+      total: 0,
+    };
+    sEntry.displayName = displayStore;
+    sEntry.months.add(mKey);
+    sEntry.occurrences += 1;
+    sEntry.total += r.totalAmount;
+    storeAcc.set(storeKey, sEntry);
+
+    if (r.lineItems) {
+      for (const it of r.lineItems) {
+        if (it.amount <= 0) continue; // skip discounts
+        const normalized = normalizeItemName(it.name);
+        if (normalized.length < 3) continue;
+        const itemKey = `${storeKey}|${normalized}`;
+        const iEntry = itemAcc.get(itemKey) ?? {
+          displayName: `${it.name.trim()} (${displayStore})`,
+          months: new Set<string>(),
+          occurrences: 0,
+          total: 0,
+        };
+        iEntry.displayName = `${it.name.trim()} (${displayStore})`;
+        iEntry.months.add(mKey);
+        iEntry.occurrences += 1;
+        iEntry.total += it.amount;
+        itemAcc.set(itemKey, iEntry);
+      }
+    }
+  }
+
+  const out: RecurringMatch[] = [];
+  for (const [label, e] of storeAcc.entries()) {
+    if (e.months.size >= minMonths) {
+      out.push({
+        label,
+        kind: 'store',
+        monthKeys: Array.from(e.months).sort(),
+        occurrences: e.occurrences,
+        total: e.total,
+        displayName: e.displayName,
+      });
+    }
+  }
+  for (const [label, e] of itemAcc.entries()) {
+    if (e.months.size >= minMonths) {
+      out.push({
+        label,
+        kind: 'item',
+        monthKeys: Array.from(e.months).sort(),
+        occurrences: e.occurrences,
+        total: e.total,
+        displayName: e.displayName,
+      });
+    }
+  }
+  return out.sort((a, b) => {
+    if (b.monthKeys.length !== a.monthKeys.length) {
+      return b.monthKeys.length - a.monthKeys.length;
+    }
+    return b.total - a.total;
+  });
+}
+
+/**
+ * Serialize a list of receipts to CSV text. Each line item becomes
+ * one row; receipts without line items get a single row with the
+ * receipt total in the item-amount column.
+ *
+ * Columns: Date, Store, Total, Subtotal, Tax, ItemName, ItemAmount,
+ * ItemCategory, ReceiptCategoryTags, Notes.
+ */
+export function receiptsToCsv(receipts: Receipt[]): string {
+  const header = [
+    'Date',
+    'Store',
+    'ReceiptTotal',
+    'Subtotal',
+    'Tax',
+    'ItemName',
+    'ItemAmount',
+    'ItemCategory',
+    'ReceiptCategoryTags',
+    'Notes',
+  ].join(',');
+  const rows: string[] = [header];
+
+  // Sort chronologically so the CSV reads top-to-bottom oldest-to-newest.
+  const sorted = [...receipts].sort((a, b) => a.date.localeCompare(b.date));
+  for (const r of sorted) {
+    const dateOnly = r.date.slice(0, 10);
+    const tags = (r.categoryTags ?? [r.category]).join('; ');
+    const base = [
+      dateOnly,
+      csvEscape(r.storeName),
+      r.totalAmount.toFixed(2),
+      r.subtotalAmount != null ? r.subtotalAmount.toFixed(2) : '',
+      r.taxAmount != null ? r.taxAmount.toFixed(2) : '',
+    ];
+    if (r.lineItems && r.lineItems.length > 0) {
+      for (const it of r.lineItems) {
+        rows.push(
+          [
+            ...base,
+            csvEscape(it.name),
+            it.amount.toFixed(2),
+            csvEscape((it.category ?? '') as string),
+            csvEscape(tags),
+            csvEscape(r.notes ?? ''),
+          ].join(','),
+        );
+      }
+    } else {
+      rows.push(
+        [
+          ...base,
+          '',
+          '',
+          csvEscape(r.category as string),
+          csvEscape(tags),
+          csvEscape(r.notes ?? ''),
+        ].join(','),
+      );
+    }
+  }
+
+  return rows.join('\n');
+}
+
+function csvEscape(value: string): string {
+  if (value == null) return '';
+  const needsQuoting = /[",\n\r]/.test(value);
+  if (!needsQuoting) return value;
+  return `"${value.replace(/"/g, '""')}"`;
 }

@@ -3,6 +3,9 @@ import {
   monthOverMonthDelta,
   monthlyTrend,
   topStores,
+  categoryTrends,
+  findRecurring,
+  receiptsToCsv,
 } from '../lib/reports';
 import { Receipt } from '../types';
 
@@ -245,5 +248,217 @@ describe('topStores', () => {
     expect(result[0].storeName).toBe('Unknown Store');
     expect(result[0].total).toBe(15);
     expect(result[0].count).toBe(2);
+  });
+});
+
+describe('categoryTrends', () => {
+  it('returns top-N categories as monthly time series across the window', () => {
+    const receipts = [
+      baseReceipt({
+        date: localIso(2026, 3, 10),
+        totalAmount: 100,
+        lineItems: [
+          { id: '1', name: 'Milk', amount: 60, category: 'Groceries' },
+          { id: '2', name: 'Shoes', amount: 40, category: 'Clothing' },
+        ],
+      }),
+      baseReceipt({
+        date: localIso(2026, 4, 10),
+        totalAmount: 50,
+        lineItems: [
+          { id: '3', name: 'Bread', amount: 50, category: 'Groceries' },
+        ],
+      }),
+      baseReceipt({
+        date: localIso(2026, 5, 10),
+        totalAmount: 80,
+        lineItems: [
+          { id: '4', name: 'Eggs', amount: 80, category: 'Groceries' },
+        ],
+      }),
+    ];
+    const trends = categoryTrends(receipts, 2026, 5, 4, 4);
+    const groceries = trends.find((t) => t.category === 'Groceries')!;
+    expect(groceries.points.map((p) => p.total)).toEqual([0, 60, 50, 80]);
+    expect(groceries.thisMonth).toBe(80);
+    expect(groceries.prevMonth).toBe(50);
+    expect(groceries.delta).toBe(30);
+    expect(groceries.windowTotal).toBe(190);
+    const clothing = trends.find((t) => t.category === 'Clothing');
+    expect(clothing).toBeDefined();
+    expect(clothing!.points.map((p) => p.total)).toEqual([0, 40, 0, 0]);
+  });
+
+  it('limits to topN by window total', () => {
+    const receipts = [
+      baseReceipt({
+        date: localIso(2026, 5, 10),
+        totalAmount: 200,
+        lineItems: [
+          { id: '1', name: 'A', amount: 100, category: 'Groceries' },
+          { id: '2', name: 'B', amount: 50, category: 'Clothing' },
+          { id: '3', name: 'C', amount: 30, category: 'Dining' },
+          { id: '4', name: 'D', amount: 20, category: 'Gas' },
+        ],
+      }),
+    ];
+    const trends = categoryTrends(receipts, 2026, 5, 6, 2);
+    expect(trends).toHaveLength(2);
+    expect(trends[0].category).toBe('Groceries');
+    expect(trends[1].category).toBe('Clothing');
+  });
+});
+
+describe('findRecurring', () => {
+  it('flags a store that appears in 3+ distinct months', () => {
+    const receipts = [
+      baseReceipt({ storeName: 'Shell', date: localIso(2026, 3, 5), totalAmount: 40 }),
+      baseReceipt({ storeName: 'Shell', date: localIso(2026, 4, 8), totalAmount: 42 }),
+      baseReceipt({ storeName: 'Shell', date: localIso(2026, 5, 12), totalAmount: 45 }),
+      baseReceipt({ storeName: 'OneOff', date: localIso(2026, 4, 1), totalAmount: 10 }),
+    ];
+    const matches = findRecurring(receipts, 3);
+    const shell = matches.find((m) => m.kind === 'store' && m.displayName === 'Shell');
+    expect(shell).toBeDefined();
+    expect(shell!.monthKeys).toEqual(['2026-03', '2026-04', '2026-05']);
+    expect(shell!.occurrences).toBe(3);
+    expect(shell!.total).toBe(127);
+    expect(matches.find((m) => m.displayName === 'OneOff')).toBeUndefined();
+  });
+
+  it('flags an item that repeats across months at the same store', () => {
+    const receipts = [
+      baseReceipt({
+        storeName: 'Loblaws',
+        date: localIso(2026, 3, 5),
+        totalAmount: 4,
+        lineItems: [{ id: '1', name: 'Organic Milk 2%', amount: 4, category: 'Groceries' }],
+      }),
+      baseReceipt({
+        storeName: 'Loblaws',
+        date: localIso(2026, 4, 5),
+        totalAmount: 4,
+        lineItems: [{ id: '2', name: 'ORGANIC MILK 1%', amount: 4, category: 'Groceries' }],
+      }),
+      baseReceipt({
+        storeName: 'Loblaws',
+        date: localIso(2026, 5, 5),
+        totalAmount: 4,
+        lineItems: [{ id: '3', name: 'organic milk', amount: 4, category: 'Groceries' }],
+      }),
+    ];
+    const matches = findRecurring(receipts, 3);
+    const milk = matches.find((m) => m.kind === 'item' && /milk/i.test(m.displayName));
+    expect(milk).toBeDefined();
+    expect(milk!.monthKeys.length).toBe(3);
+  });
+
+  it('does NOT flag an item that recurs across DIFFERENT stores', () => {
+    const receipts = [
+      baseReceipt({
+        storeName: 'StoreA',
+        date: localIso(2026, 3, 5),
+        totalAmount: 5,
+        lineItems: [{ id: '1', name: 'Bread', amount: 5, category: 'Groceries' }],
+      }),
+      baseReceipt({
+        storeName: 'StoreB',
+        date: localIso(2026, 4, 5),
+        totalAmount: 5,
+        lineItems: [{ id: '2', name: 'Bread', amount: 5, category: 'Groceries' }],
+      }),
+      baseReceipt({
+        storeName: 'StoreC',
+        date: localIso(2026, 5, 5),
+        totalAmount: 5,
+        lineItems: [{ id: '3', name: 'Bread', amount: 5, category: 'Groceries' }],
+      }),
+    ];
+    const matches = findRecurring(receipts, 3);
+    expect(matches.filter((m) => m.kind === 'item')).toHaveLength(0);
+  });
+
+  it('ignores negative-amount (discount) line items', () => {
+    const receipts = [
+      baseReceipt({
+        storeName: 'X',
+        date: localIso(2026, 3, 5),
+        totalAmount: 0,
+        lineItems: [{ id: '1', name: 'Promo Discount', amount: -10, category: 'Other' }],
+      }),
+      baseReceipt({
+        storeName: 'X',
+        date: localIso(2026, 4, 5),
+        totalAmount: 0,
+        lineItems: [{ id: '2', name: 'Promo Discount', amount: -10, category: 'Other' }],
+      }),
+      baseReceipt({
+        storeName: 'X',
+        date: localIso(2026, 5, 5),
+        totalAmount: 0,
+        lineItems: [{ id: '3', name: 'Promo Discount', amount: -10, category: 'Other' }],
+      }),
+    ];
+    const matches = findRecurring(receipts, 3);
+    expect(matches.filter((m) => m.kind === 'item')).toHaveLength(0);
+  });
+});
+
+describe('receiptsToCsv', () => {
+  it('emits header + one row per line item', () => {
+    const csv = receiptsToCsv([
+      baseReceipt({
+        date: '2026-05-10T00:00:00.000Z',
+        storeName: 'Walmart',
+        totalAmount: 18.95,
+        subtotalAmount: 17.50,
+        taxAmount: 1.45,
+        category: 'Groceries',
+        categoryTags: ['Groceries'],
+        lineItems: [
+          { id: '1', name: 'Milk', amount: 3.99, category: 'Groceries' },
+          { id: '2', name: 'Bread', amount: 4.50, category: 'Groceries' },
+        ],
+      }),
+    ]);
+    const lines = csv.split('\n');
+    expect(lines[0]).toContain('Date,Store,ReceiptTotal');
+    expect(lines).toHaveLength(3); // header + 2 items
+    expect(lines[1]).toContain('Walmart');
+    expect(lines[1]).toContain('Milk');
+    expect(lines[1]).toContain('3.99');
+  });
+
+  it('escapes commas, quotes, and newlines in fields', () => {
+    const csv = receiptsToCsv([
+      baseReceipt({
+        date: '2026-05-10T00:00:00.000Z',
+        storeName: 'Smith, Sons & Co.',
+        totalAmount: 10,
+        notes: 'Said "thanks"\nNext line',
+        lineItems: [
+          { id: '1', name: 'Item, with comma', amount: 10, category: 'Other' },
+        ],
+      }),
+    ]);
+    expect(csv).toContain('"Smith, Sons & Co."');
+    expect(csv).toContain('"Item, with comma"');
+    expect(csv).toContain('"Said ""thanks""');
+  });
+
+  it('emits a single row for receipts without line items', () => {
+    const csv = receiptsToCsv([
+      baseReceipt({
+        date: '2026-05-10T00:00:00.000Z',
+        storeName: 'Diner',
+        totalAmount: 25,
+        category: 'Dining',
+        categoryTags: ['Dining'],
+      }),
+    ]);
+    const lines = csv.split('\n');
+    expect(lines).toHaveLength(2); // header + 1 row
+    expect(lines[1]).toContain('Diner');
+    expect(lines[1]).toContain('Dining');
   });
 });

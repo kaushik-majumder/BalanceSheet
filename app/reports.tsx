@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { format, addMonths, subMonths } from 'date-fns';
 import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { theme } from '../constants/theme';
 import {
   ALL_CATEGORIES,
@@ -19,11 +22,16 @@ import {
 } from '../constants/categories';
 import { getAllReceipts } from '../lib/database';
 import {
+  CategoryTrend,
   MonthBucket,
   MonthOverMonthDelta,
+  RecurringMatch,
   TopStore,
+  categoryTrends,
+  findRecurring,
   monthOverMonthDelta,
   monthlyTrend,
+  receiptsToCsv,
   topStores,
 } from '../lib/reports';
 import { Receipt, Category } from '../types';
@@ -60,6 +68,46 @@ export default function ReportsScreen() {
     return d.getFullYear() === year && d.getMonth() + 1 === month;
   });
   const stores: TopStore[] = topStores(monthReceipts, 3);
+  const trends: CategoryTrend[] = categoryTrends(receipts, year, month, 6, 4);
+  const recurring: RecurringMatch[] = findRecurring(receipts, 3);
+  const [exporting, setExporting] = useState(false);
+
+  const exportCsv = useCallback(async () => {
+    if (exporting) return;
+    if (receipts.length === 0) {
+      Alert.alert(
+        'Nothing to export',
+        'Scan a few receipts before generating a CSV.',
+      );
+      return;
+    }
+    setExporting(true);
+    try {
+      const csv = receiptsToCsv(receipts);
+      const stamp = format(new Date(), 'yyyy-MM-dd');
+      const path = `${FileSystem.documentDirectory}balancesheet-${stamp}.csv`;
+      await FileSystem.writeAsStringAsync(path, csv, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(path, {
+          mimeType: 'text/csv',
+          dialogTitle: 'Export receipts CSV',
+          UTI: 'public.comma-separated-values-text',
+        });
+      } else {
+        Alert.alert(
+          'Saved',
+          `Sharing isn't available on this device, but the CSV was written to ${path}.`,
+        );
+      }
+    } catch (e) {
+      Alert.alert('Export failed', (e as Error)?.message ?? 'Try again.');
+    } finally {
+      setExporting(false);
+    }
+  }, [receipts, exporting]);
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
@@ -68,7 +116,18 @@ export default function ReportsScreen() {
           <Ionicons name="chevron-back" size={24} color={theme.colors.textPrimary} />
         </Pressable>
         <Text style={styles.headerTitle}>Reports</Text>
-        <View style={{ width: 32 }} />
+        <Pressable
+          onPress={exportCsv}
+          disabled={exporting || receipts.length === 0}
+          hitSlop={10}
+          style={[styles.iconBtn, (exporting || receipts.length === 0) && { opacity: 0.4 }]}
+        >
+          {exporting ? (
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+          ) : (
+            <Ionicons name="share-outline" size={22} color={theme.colors.textPrimary} />
+          )}
+        </Pressable>
       </View>
 
       {loading ? (
@@ -241,6 +300,96 @@ export default function ReportsScreen() {
             </Section>
           )}
 
+          {/* Per-category trends */}
+          {trends.length > 0 && (
+            <Section title="Category trends (6 months)">
+              {trends.map((t) => {
+                const standard = (
+                  ALL_CATEGORIES as readonly string[]
+                ).includes(t.category);
+                const color = standard
+                  ? theme.colors.category[t.category as Category]
+                  : theme.colors.primary;
+                const icon = standard
+                  ? CATEGORY_ICONS[t.category as Category]
+                  : '🏷️';
+                const isUp = t.delta > 0;
+                const isDown = t.delta < 0;
+                return (
+                  <View key={t.category} style={styles.trendBlock}>
+                    <View style={styles.trendBlockHeader}>
+                      <Text style={styles.rowIcon}>{icon}</Text>
+                      <Text style={styles.rowLabel}>{t.category}</Text>
+                      <View style={styles.trendDelta}>
+                        {isUp || isDown ? (
+                          <Ionicons
+                            name={isUp ? 'arrow-up' : 'arrow-down'}
+                            size={11}
+                            color={
+                              isUp ? theme.colors.error : theme.colors.primary
+                            }
+                          />
+                        ) : null}
+                        <Text
+                          style={[
+                            styles.trendDeltaText,
+                            {
+                              color: isUp
+                                ? theme.colors.error
+                                : isDown
+                                  ? theme.colors.primary
+                                  : theme.colors.textMuted,
+                            },
+                          ]}
+                        >
+                          {t.delta === 0
+                            ? '—'
+                            : `$${Math.abs(t.delta).toFixed(0)}`}
+                        </Text>
+                      </View>
+                      <Text style={[styles.rowAmount, { color }]}>
+                        ${t.thisMonth.toFixed(2)}
+                      </Text>
+                    </View>
+                    <CategorySparkline points={t.points} color={color} />
+                  </View>
+                );
+              })}
+            </Section>
+          )}
+
+          {/* Recurring expenses */}
+          {recurring.length > 0 && (
+            <Section title="Recurring">
+              <Text style={styles.recurringHint}>
+                Items and stores that appear in 3+ months — likely
+                subscriptions, fuel runs, or staples worth budgeting.
+              </Text>
+              {recurring.slice(0, 8).map((m) => (
+                <View key={`${m.kind}-${m.label}`} style={styles.row}>
+                  <Ionicons
+                    name={
+                      m.kind === 'store'
+                        ? 'storefront-outline'
+                        : 'cube-outline'
+                    }
+                    size={16}
+                    color={theme.colors.textSecondary}
+                  />
+                  <View style={styles.recurringLabelBox}>
+                    <Text style={styles.rowLabel} numberOfLines={1}>
+                      {m.displayName}
+                    </Text>
+                    <Text style={styles.rowMuted}>
+                      {m.monthKeys.length} months · {m.occurrences}x
+                    </Text>
+                  </View>
+                  <Text style={styles.rowAmount}>${m.total.toFixed(2)}</Text>
+                </View>
+              ))}
+            </Section>
+          )}
+
           {/* Empty state */}
           {receipts.length === 0 && (
             <View style={styles.emptyState}>
@@ -366,6 +515,39 @@ function Section({
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
       <View style={styles.sectionBody}>{children}</View>
+    </View>
+  );
+}
+
+function CategorySparkline({
+  points,
+  color,
+}: {
+  points: Array<{ shortLabel: string; total: number }>;
+  color: string;
+}) {
+  const max = Math.max(1, ...points.map((p) => p.total));
+  return (
+    <View style={styles.sparkRow}>
+      {points.map((p, idx) => {
+        const h = max > 0 ? (p.total / max) * 100 : 0;
+        return (
+          <View key={`${p.shortLabel}-${idx}`} style={styles.sparkCol}>
+            <View style={styles.sparkBarTrack}>
+              <View
+                style={[
+                  styles.sparkBarFill,
+                  {
+                    height: `${h}%` as `${number}%`,
+                    backgroundColor: color,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={styles.sparkLabel}>{p.shortLabel}</Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -579,5 +761,65 @@ const styles = StyleSheet.create({
     fontSize: theme.font.sm,
     textAlign: 'center',
     maxWidth: 280,
+  },
+  trendBlock: {
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    gap: 6,
+  },
+  trendBlockHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  trendDelta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    minWidth: 56,
+    justifyContent: 'flex-end',
+  },
+  trendDeltaText: {
+    fontSize: theme.font.xs,
+    fontWeight: '700',
+  },
+  sparkRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 3,
+    height: 36,
+  },
+  sparkCol: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  sparkBarTrack: {
+    width: '70%',
+    height: 26,
+    backgroundColor: theme.colors.border,
+    borderRadius: 2,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+  },
+  sparkBarFill: {
+    width: '100%',
+    minHeight: 1,
+  },
+  sparkLabel: {
+    color: theme.colors.textMuted,
+    fontSize: 9,
+    marginTop: 2,
+  },
+  recurringHint: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    paddingHorizontal: 4,
+    paddingBottom: 4,
+  },
+  recurringLabelBox: {
+    flex: 1,
+    minWidth: 0,
   },
 });
