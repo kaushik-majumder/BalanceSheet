@@ -87,7 +87,13 @@ jobs:
       - name: EAS local build (Android APK)
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # Use the working directory as-is instead of packaging only
+          # git-tracked files — google-services.json is gitignored but
+          # materialised at runtime from a secret in the step above.
+          EAS_NO_VCS: '1'
         run: |
+          echo "--- working directory before build ---"
+          ls -la google-services.json
           eas build \
             --profile ${{ steps.profile.outputs.name }} \
             --platform android \
