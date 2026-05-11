@@ -14,6 +14,7 @@ import {
   Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as FileSystem from 'expo-file-system';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -150,6 +151,23 @@ function EditReceiptScreen() {
       setNotes(r.notes ?? '');
       setItems(r.lineItems ?? []);
       setLoading(false);
+
+      // Verify the receipt's image actually exists on disk. Older
+      // scans saved a temp-cache URI that Android may have since
+      // pruned — if the file is gone, hide the image area entirely
+      // instead of reserving space for it (which renders as a
+      // navy rectangle on top of the screen).
+      if (r.imageUri) {
+        try {
+          const info = await FileSystem.getInfoAsync(r.imageUri);
+          if (mounted && !info.exists) setImageMissing(true);
+        } catch {
+          if (mounted) setImageMissing(true);
+        }
+      } else {
+        // No URI saved at all — same effect, just skip the network check.
+        setImageMissing(true);
+      }
 
       // Background refinement — run the async classifier on items still
       // marked 'Other'. Updates land in the DB; refresh local state on
