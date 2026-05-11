@@ -6,6 +6,9 @@ import {
   categoryTrends,
   findRecurring,
   receiptsToCsv,
+  summarizeRange,
+  periodOverPeriodDelta,
+  filterReceiptsInRange,
 } from '../lib/reports';
 import { Receipt } from '../types';
 
@@ -248,6 +251,119 @@ describe('topStores', () => {
     expect(result[0].storeName).toBe('Unknown Store');
     expect(result[0].total).toBe(15);
     expect(result[0].count).toBe(2);
+  });
+});
+
+describe('filterReceiptsInRange', () => {
+  const receipts = [
+    baseReceipt({ id: 'a', date: localIso(2026, 4, 30), totalAmount: 10 }),
+    baseReceipt({ id: 'b', date: localIso(2026, 5, 1), totalAmount: 20 }),
+    baseReceipt({ id: 'c', date: localIso(2026, 5, 15), totalAmount: 30 }),
+    baseReceipt({ id: 'd', date: localIso(2026, 5, 31), totalAmount: 40 }),
+    baseReceipt({ id: 'e', date: localIso(2026, 6, 1), totalAmount: 50 }),
+  ];
+
+  it('includes both endpoints (inclusive)', () => {
+    const r = filterReceiptsInRange(
+      receipts,
+      new Date(2026, 4, 1), // May 1
+      new Date(2026, 4, 31), // May 31
+    );
+    expect(r.map((x) => x.id)).toEqual(['b', 'c', 'd']);
+  });
+
+  it('returns empty when no receipts fall in the range', () => {
+    const r = filterReceiptsInRange(
+      receipts,
+      new Date(2027, 0, 1),
+      new Date(2027, 0, 31),
+    );
+    expect(r).toEqual([]);
+  });
+});
+
+describe('summarizeRange', () => {
+  it('aggregates totals across multiple months within the range', () => {
+    const receipts = [
+      baseReceipt({ date: localIso(2026, 3, 15), totalAmount: 100 }),
+      baseReceipt({ date: localIso(2026, 4, 20), totalAmount: 200 }),
+      baseReceipt({ date: localIso(2026, 5, 10), totalAmount: 50 }),
+      // Outside range — should be ignored
+      baseReceipt({ date: localIso(2026, 2, 1), totalAmount: 999 }),
+      baseReceipt({ date: localIso(2026, 6, 1), totalAmount: 999 }),
+    ];
+    const s = summarizeRange(
+      receipts,
+      new Date(2026, 2, 1),
+      new Date(2026, 4, 31),
+    );
+    expect(s.total).toBe(350);
+    expect(s.receiptCount).toBe(3);
+    expect(s.avgPerReceipt).toBeCloseTo(116.67, 1);
+  });
+
+  it('picks biggest receipt and item across the range, not just one month', () => {
+    const receipts = [
+      baseReceipt({
+        id: 'r1',
+        date: localIso(2026, 3, 15),
+        storeName: 'Costco',
+        totalAmount: 200,
+        lineItems: [{ id: '1', name: 'Mirror', amount: 150 }],
+      }),
+      baseReceipt({
+        id: 'r2',
+        date: localIso(2026, 5, 10),
+        storeName: 'Walmart',
+        totalAmount: 50,
+        lineItems: [{ id: '2', name: 'Milk', amount: 5 }],
+      }),
+    ];
+    const s = summarizeRange(
+      receipts,
+      new Date(2026, 2, 1),
+      new Date(2026, 4, 31),
+    );
+    expect(s.biggestReceipt?.receiptId).toBe('r1');
+    expect(s.biggestItem?.itemName).toBe('Mirror');
+  });
+});
+
+describe('periodOverPeriodDelta', () => {
+  it('compares a range to the same-length window immediately before it', () => {
+    // May 2026 = 31 days. Prior period = April 2026 = 30 days, ending
+    // April 30. The prior window therefore covers Apr 1 – Apr 30 (the
+    // 31-day-back start lands on March 31).
+    const receipts = [
+      // current (May)
+      baseReceipt({ date: localIso(2026, 5, 5), totalAmount: 100 }),
+      baseReceipt({ date: localIso(2026, 5, 20), totalAmount: 50 }),
+      // previous window (~April)
+      baseReceipt({ date: localIso(2026, 4, 10), totalAmount: 80 }),
+    ];
+    const r = periodOverPeriodDelta(
+      receipts,
+      new Date(2026, 4, 1),
+      new Date(2026, 4, 31),
+    );
+    expect(r.current.total).toBe(150);
+    expect(r.previous.total).toBe(80);
+    expect(r.delta).toBe(70);
+    expect(r.deltaPct).toBeCloseTo(0.875, 3);
+  });
+
+  it('returns null pct when previous window had zero spend', () => {
+    const receipts = [
+      baseReceipt({ date: localIso(2026, 5, 10), totalAmount: 100 }),
+    ];
+    const r = periodOverPeriodDelta(
+      receipts,
+      new Date(2026, 4, 1),
+      new Date(2026, 4, 31),
+    );
+    expect(r.previous.total).toBe(0);
+    expect(r.delta).toBe(100);
+    expect(r.deltaPct).toBeNull();
   });
 });
 

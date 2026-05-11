@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { format, addMonths, subMonths } from 'date-fns';
+import { format } from 'date-fns';
 import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system';
@@ -21,25 +21,72 @@ import {
   CATEGORY_ICONS,
 } from '../constants/categories';
 import { getAllReceipts } from '../lib/database';
+import DateTimePicker, {
+  DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 import {
   CategoryTrend,
   MonthBucket,
-  MonthOverMonthDelta,
+  PeriodDelta,
+  RangeSummary,
   RecurringMatch,
   TopStore,
   categoryTrends,
+  filterReceiptsInRange,
   findRecurring,
-  monthOverMonthDelta,
   monthlyTrend,
+  periodOverPeriodDelta,
   receiptsToCsv,
   topStores,
 } from '../lib/reports';
 import { Receipt, Category } from '../types';
 
+type PresetKey = 'this' | '2m' | '3m' | '6m' | 'custom';
+
+/** Compute [start, end] for a built-in preset, anchored at TODAY in
+ *  local time. "this" = current calendar month; the multi-month
+ *  presets stretch backward from today to the start of (N-1) months
+ *  ago so the user always sees a complete period including this month. */
+function rangeForPreset(preset: Exclude<PresetKey, 'custom'>): {
+  start: Date;
+  end: Date;
+} {
+  const now = new Date();
+  if (preset === 'this') {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth(), 1),
+      end: new Date(now.getFullYear(), now.getMonth() + 1, 0),
+    };
+  }
+  const monthsBack = preset === '2m' ? 1 : preset === '3m' ? 2 : 5;
+  return {
+    start: new Date(now.getFullYear(), now.getMonth() - monthsBack, 1),
+    end: new Date(now.getFullYear(), now.getMonth() + 1, 0),
+  };
+}
+
 export default function ReportsScreen() {
-  const [activeMonth, setActiveMonth] = useState(new Date());
+  const [preset, setPreset] = useState<PresetKey>('this');
+  const initial = rangeForPreset('this');
+  const [start, setStart] = useState<Date>(initial.start);
+  const [end, setEnd] = useState<Date>(initial.end);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Native picker visibility — Android shows them inline as system
+  // dialogs that close themselves; iOS keeps them inline so we
+  // toggle visibility manually.
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
+
+  const selectPreset = (key: PresetKey) => {
+    setPreset(key);
+    if (key !== 'custom') {
+      const r = rangeForPreset(key);
+      setStart(r.start);
+      setEnd(r.end);
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -56,19 +103,39 @@ export default function ReportsScreen() {
     }, []),
   );
 
-  const year = activeMonth.getFullYear();
-  const month = activeMonth.getMonth() + 1;
-  const mom: MonthOverMonthDelta | null =
-    receipts.length > 0 || !loading
-      ? monthOverMonthDelta(receipts, year, month)
-      : null;
-  const trend: MonthBucket[] = monthlyTrend(receipts, year, month, 6);
-  const monthReceipts = receipts.filter((r) => {
-    const d = new Date(r.date);
-    return d.getFullYear() === year && d.getMonth() + 1 === month;
-  });
-  const stores: TopStore[] = topStores(monthReceipts, 3);
-  const trends: CategoryTrend[] = categoryTrends(receipts, year, month, 6, 4);
+  // Anchor month for trend chart + category trends: use the END of
+  // the selected range so the chart shows the most-recent context.
+  const trendYear = end.getFullYear();
+  const trendMonth = end.getMonth() + 1;
+  // Make the trend window stretch back at least as many months as
+  // the user's range — so 6-month preset shows a 6-bar trend, etc.
+  const rangeMonthsSpan = Math.max(
+    1,
+    (end.getFullYear() - start.getFullYear()) * 12 +
+      (end.getMonth() - start.getMonth()) +
+      1,
+  );
+  const trendBars = Math.max(6, rangeMonthsSpan);
+
+  const periodDelta: PeriodDelta | null = !loading
+    ? periodOverPeriodDelta(receipts, start, end)
+    : null;
+  const summary: RangeSummary | null = periodDelta?.current ?? null;
+  const trend: MonthBucket[] = monthlyTrend(
+    receipts,
+    trendYear,
+    trendMonth,
+    trendBars,
+  );
+  const rangeReceipts = filterReceiptsInRange(receipts, start, end);
+  const stores: TopStore[] = topStores(rangeReceipts, 3);
+  const trends: CategoryTrend[] = categoryTrends(
+    receipts,
+    trendYear,
+    trendMonth,
+    trendBars,
+    4,
+  );
   const recurring: RecurringMatch[] = findRecurring(receipts, 3);
   const [exporting, setExporting] = useState(false);
 
@@ -83,8 +150,11 @@ export default function ReportsScreen() {
     }
     setExporting(true);
     try {
-      const csv = receiptsToCsv(receipts);
-      const stamp = format(new Date(), 'yyyy-MM-dd');
+      // Export ONLY the receipts in the user's currently selected
+      // range — matches the rest of the screen and keeps the CSV
+      // manageable when there are years of history.
+      const csv = receiptsToCsv(rangeReceipts);
+      const stamp = `${format(start, 'yyyy-MM-dd')}_to_${format(end, 'yyyy-MM-dd')}`;
       const path = `${FileSystem.documentDirectory}balancesheet-${stamp}.csv`;
       await FileSystem.writeAsStringAsync(path, csv, {
         encoding: FileSystem.EncodingType.UTF8,
@@ -107,7 +177,7 @@ export default function ReportsScreen() {
     } finally {
       setExporting(false);
     }
-  }, [receipts, exporting]);
+  }, [rangeReceipts, exporting, start, end]);
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
@@ -136,52 +206,133 @@ export default function ReportsScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          {/* Month navigator */}
-          <View style={styles.monthNav}>
-            <TouchableOpacity
-              onPress={() => setActiveMonth((d) => subMonths(d, 1))}
-              hitSlop={12}
-            >
-              <Ionicons
-                name="chevron-back"
-                size={22}
-                color={theme.colors.textSecondary}
-              />
-            </TouchableOpacity>
-            <Text style={styles.monthLabel}>
-              {format(activeMonth, 'MMMM yyyy')}
-            </Text>
-            <TouchableOpacity
-              onPress={() => setActiveMonth((d) => addMonths(d, 1))}
-              hitSlop={12}
-            >
-              <Ionicons
-                name="chevron-forward"
-                size={22}
-                color={theme.colors.textSecondary}
-              />
-            </TouchableOpacity>
+          {/* Range presets — tap a chip to scope everything below */}
+          <View style={styles.presetRow}>
+            {(
+              [
+                { key: 'this' as PresetKey, label: 'This month' },
+                { key: '2m' as PresetKey, label: '2 mo' },
+                { key: '3m' as PresetKey, label: '3 mo' },
+                { key: '6m' as PresetKey, label: '6 mo' },
+                { key: 'custom' as PresetKey, label: 'Custom' },
+              ] as const
+            ).map((p) => {
+              const active = preset === p.key;
+              return (
+                <TouchableOpacity
+                  key={p.key}
+                  onPress={() => selectPreset(p.key)}
+                  style={[styles.presetChip, active && styles.presetChipActive]}
+                >
+                  <Text
+                    style={[
+                      styles.presetChipText,
+                      active && styles.presetChipTextActive,
+                    ]}
+                  >
+                    {p.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
-          {/* Hero — month total + MoM delta */}
-          <SummaryCard mom={mom} />
+          {/* Custom range pickers — only shown when preset === 'custom'.
+              Tap a chip to open the platform date picker. */}
+          {preset === 'custom' && (
+            <View style={styles.customRangeRow}>
+              <TouchableOpacity
+                onPress={() => setShowStartPicker(true)}
+                style={styles.dateChip}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={14}
+                  color={theme.colors.textSecondary}
+                />
+                <Text style={styles.dateChipText}>
+                  {format(start, 'MMM d, yyyy')}
+                </Text>
+              </TouchableOpacity>
+              <Text style={styles.rangeDash}>→</Text>
+              <TouchableOpacity
+                onPress={() => setShowEndPicker(true)}
+                style={styles.dateChip}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={14}
+                  color={theme.colors.textSecondary}
+                />
+                <Text style={styles.dateChipText}>
+                  {format(end, 'MMM d, yyyy')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
-          {/* 6-month trend chart */}
-          <Section title="6-month trend">
+          {/* Range label so the user always sees the period in plain English */}
+          <Text style={styles.rangeLabel}>
+            {format(start, 'MMM d, yyyy')} — {format(end, 'MMM d, yyyy')}
+          </Text>
+
+          {showStartPicker && (
+            <DateTimePicker
+              value={start}
+              mode="date"
+              display="default"
+              maximumDate={end}
+              onChange={(_event: DateTimePickerEvent, picked?: Date) => {
+                setShowStartPicker(false);
+                if (picked) setStart(picked);
+              }}
+            />
+          )}
+          {showEndPicker && (
+            <DateTimePicker
+              value={end}
+              mode="date"
+              display="default"
+              minimumDate={start}
+              maximumDate={new Date()}
+              onChange={(_event: DateTimePickerEvent, picked?: Date) => {
+                setShowEndPicker(false);
+                if (picked) setEnd(picked);
+              }}
+            />
+          )}
+
+          {/* Hero — period total + delta vs preceding window */}
+          <SummaryCard delta={periodDelta} />
+
+          {/* Trend chart — bars scale to the range, with the months
+              that fall in [start, end] highlighted. Tap a bar to
+              switch to that single-month preset. */}
+          <Section title={`${trendBars}-month trend`}>
             <TrendChart
               data={trend}
-              activeMonthKey={`${year}-${String(month).padStart(2, '0')}`}
+              activeMonthKeys={trend
+                .filter((b) => {
+                  const bStart = new Date(b.year, b.month - 1, 1);
+                  const bEnd = new Date(b.year, b.month, 0, 23, 59, 59);
+                  return bStart <= end && bEnd >= start;
+                })
+                .map((b) => b.key)}
               onBarPress={(b) => {
-                setActiveMonth(new Date(b.year, b.month - 1, 1));
+                setPreset('custom');
+                setStart(new Date(b.year, b.month - 1, 1));
+                setEnd(new Date(b.year, b.month, 0));
               }}
             />
           </Section>
 
           {/* Top categories — tap to drill into the existing
-              category-detail screen scoped to this month. */}
-          {mom && mom.thisMonth.categories.length > 0 && (
+              category-detail screen scoped to the END month of the
+              selected range. (The drilldown still keys by month, not
+              arbitrary range, so this is the closest match.) */}
+          {summary && summary.categories.length > 0 && (
             <Section title="Top categories">
-              {mom.thisMonth.categories.slice(0, 5).map((c) => {
+              {summary.categories.slice(0, 5).map((c) => {
                 const standard = (ALL_CATEGORIES as readonly string[]).includes(
                   c.category,
                 );
@@ -203,8 +354,8 @@ export default function ReportsScreen() {
                         pathname: '/category-detail',
                         params: {
                           category: c.category,
-                          year: String(year),
-                          month: String(month),
+                          year: String(trendYear),
+                          month: String(trendMonth),
                         },
                       } as never)
                     }
@@ -226,9 +377,9 @@ export default function ReportsScreen() {
           )}
 
           {/* Biggest receipt + biggest item */}
-          {mom && (mom.thisMonth.biggestReceipt || mom.thisMonth.biggestItem) && (
+          {summary && (summary.biggestReceipt || summary.biggestItem) && (
             <Section title="Standouts">
-              {mom.thisMonth.biggestReceipt && (
+              {summary.biggestReceipt && (
                 <Pressable
                   style={({ pressed }) => [
                     styles.standoutCard,
@@ -236,25 +387,25 @@ export default function ReportsScreen() {
                   ]}
                   onPress={() =>
                     router.push(
-                      `/edit/${mom.thisMonth.biggestReceipt!.receiptId}` as never,
+                      `/edit/${summary.biggestReceipt!.receiptId}` as never,
                     )
                   }
                 >
                   <Text style={styles.standoutLabel}>Biggest receipt</Text>
                   <Text style={styles.standoutAmount}>
-                    ${mom.thisMonth.biggestReceipt.total.toFixed(2)}
+                    ${summary.biggestReceipt.total.toFixed(2)}
                   </Text>
                   <Text style={styles.standoutSub}>
-                    {mom.thisMonth.biggestReceipt.storeName}
+                    {summary.biggestReceipt.storeName}
                     {' · '}
                     {format(
-                      new Date(mom.thisMonth.biggestReceipt.date),
+                      new Date(summary.biggestReceipt.date),
                       'MMM d',
                     )}
                   </Text>
                 </Pressable>
               )}
-              {mom.thisMonth.biggestItem && (
+              {summary.biggestItem && (
                 <Pressable
                   style={({ pressed }) => [
                     styles.standoutCard,
@@ -262,18 +413,18 @@ export default function ReportsScreen() {
                   ]}
                   onPress={() =>
                     router.push(
-                      `/edit/${mom.thisMonth.biggestItem!.receiptId}` as never,
+                      `/edit/${summary.biggestItem!.receiptId}` as never,
                     )
                   }
                 >
                   <Text style={styles.standoutLabel}>Biggest single item</Text>
                   <Text style={styles.standoutAmount}>
-                    ${mom.thisMonth.biggestItem.amount.toFixed(2)}
+                    ${summary.biggestItem.amount.toFixed(2)}
                   </Text>
                   <Text style={styles.standoutSub} numberOfLines={1}>
-                    {mom.thisMonth.biggestItem.itemName}
+                    {summary.biggestItem.itemName}
                     {' · '}
-                    {mom.thisMonth.biggestItem.storeName}
+                    {summary.biggestItem.storeName}
                   </Text>
                 </Pressable>
               )}
@@ -411,11 +562,11 @@ export default function ReportsScreen() {
   );
 }
 
-function SummaryCard({ mom }: { mom: MonthOverMonthDelta | null }) {
-  if (!mom) return null;
-  const { thisMonth, delta, deltaPct } = mom;
-  const isUp = delta > 0;
-  const isDown = delta < 0;
+function SummaryCard({ delta }: { delta: PeriodDelta | null }) {
+  if (!delta) return null;
+  const { current, delta: d, deltaPct } = delta;
+  const isUp = d > 0;
+  const isDown = d < 0;
   const deltaColor = isUp
     ? theme.colors.error
     : isDown
@@ -425,25 +576,25 @@ function SummaryCard({ mom }: { mom: MonthOverMonthDelta | null }) {
   return (
     <View style={styles.summaryCard}>
       <Text style={styles.summaryLabel}>Total spent</Text>
-      <Text style={styles.summaryAmount}>${thisMonth.total.toFixed(2)}</Text>
+      <Text style={styles.summaryAmount}>${current.total.toFixed(2)}</Text>
       <View style={styles.summaryMetaRow}>
         <Text style={styles.summarySub}>
-          {thisMonth.receiptCount} receipt{thisMonth.receiptCount === 1 ? '' : 's'}
-          {thisMonth.avgPerReceipt > 0
-            ? ` · avg $${thisMonth.avgPerReceipt.toFixed(2)}`
+          {current.receiptCount} receipt{current.receiptCount === 1 ? '' : 's'}
+          {current.avgPerReceipt > 0
+            ? ` · avg $${current.avgPerReceipt.toFixed(2)}`
             : ''}
         </Text>
       </View>
       <View style={[styles.deltaPill, { borderColor: deltaColor }]}>
         <Ionicons name={arrow} size={14} color={deltaColor} />
         <Text style={[styles.deltaText, { color: deltaColor }]}>
-          {delta === 0 && deltaPct == null
-            ? 'No data last month'
-            : delta === 0
-              ? 'Same as last month'
-              : `$${Math.abs(delta).toFixed(2)}${
+          {d === 0 && deltaPct == null
+            ? 'No data last period'
+            : d === 0
+              ? 'Same as last period'
+              : `$${Math.abs(d).toFixed(2)}${
                   deltaPct != null ? ` (${Math.abs(deltaPct * 100).toFixed(0)}%)` : ''
-                } vs last month`}
+                } vs last period`}
         </Text>
       </View>
     </View>
@@ -452,19 +603,20 @@ function SummaryCard({ mom }: { mom: MonthOverMonthDelta | null }) {
 
 function TrendChart({
   data,
-  activeMonthKey,
+  activeMonthKeys,
   onBarPress,
 }: {
   data: MonthBucket[];
-  activeMonthKey: string;
+  activeMonthKeys: string[];
   onBarPress: (bucket: MonthBucket) => void;
 }) {
   const max = Math.max(1, ...data.map((b) => b.total));
+  const activeSet = new Set(activeMonthKeys);
   return (
     <View style={styles.trendChart}>
       {data.map((b) => {
         const heightPct = max > 0 ? (b.total / max) * 100 : 0;
-        const isActive = b.key === activeMonthKey;
+        const isActive = activeSet.has(b.key);
         return (
           <Pressable
             key={b.key}
@@ -587,19 +739,63 @@ const styles = StyleSheet.create({
     gap: theme.spacing.md,
     paddingBottom: 40,
   },
-  monthNav: {
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  presetChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  presetChipActive: {
+    backgroundColor: `${theme.colors.primary}22`,
+    borderColor: theme.colors.primary,
+  },
+  presetChipText: {
+    color: theme.colors.textSecondary,
+    fontSize: theme.font.xs,
+    fontWeight: '700',
+  },
+  presetChipTextActive: {
+    color: theme.colors.primary,
+  },
+  customRangeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.md,
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 4,
   },
-  monthLabel: {
+  dateChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  dateChipText: {
     color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    fontWeight: '600',
+  },
+  rangeDash: {
+    color: theme.colors.textMuted,
     fontSize: theme.font.md,
-    fontWeight: '700',
+  },
+  rangeLabel: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    textAlign: 'center',
+    marginTop: -4,
   },
   summaryCard: {
     backgroundColor: theme.colors.surface,

@@ -55,6 +55,37 @@ export type MonthOverMonthDelta = {
   deltaPct: number | null;
 };
 
+/** Summary of an arbitrary date range — superset of MonthlySummary
+ *  that the Reports screen uses for any preset or custom range. */
+export type RangeSummary = {
+  start: Date;
+  end: Date;
+  total: number;
+  receiptCount: number;
+  categories: Array<{ category: Category | string; total: number }>;
+  topCategory: { category: Category | string; total: number } | null;
+  avgPerReceipt: number;
+  biggestReceipt: {
+    receiptId: string;
+    storeName: string;
+    date: string;
+    total: number;
+  } | null;
+  biggestItem: {
+    receiptId: string;
+    storeName: string;
+    itemName: string;
+    amount: number;
+  } | null;
+};
+
+export type PeriodDelta = {
+  current: RangeSummary;
+  previous: RangeSummary;
+  delta: number;
+  deltaPct: number | null;
+};
+
 export type TopStore = {
   storeName: string;
   total: number;
@@ -209,6 +240,113 @@ export function summarizeMonth(
     biggestReceipt,
     biggestItem,
   };
+}
+
+/**
+ * Filter the receipts that fall within [start, end] (inclusive on
+ * both ends, day-level granularity in LOCAL time).
+ */
+export function filterReceiptsInRange(
+  receipts: Receipt[],
+  start: Date,
+  end: Date,
+): Receipt[] {
+  const startMs = startOfLocalDay(start).getTime();
+  const endMs = endOfLocalDay(end).getTime();
+  return receipts.filter((r) => {
+    const ms = new Date(r.date).getTime();
+    return ms >= startMs && ms <= endMs;
+  });
+}
+
+function startOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+function endOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+}
+
+/**
+ * Summarize an arbitrary date range. The contract mirrors summarizeMonth
+ * (top categories, biggest receipt, biggest item, etc.) but spans
+ * however many days/months the caller passes in.
+ */
+export function summarizeRange(
+  receipts: Receipt[],
+  start: Date,
+  end: Date,
+): RangeSummary {
+  const scoped = filterReceiptsInRange(receipts, start, end);
+  const total = scoped.reduce((s, r) => s + r.totalAmount, 0);
+  const receiptCount = scoped.length;
+  const catMap = categoryTotalsFor(scoped);
+  const categories = Array.from(catMap.entries())
+    .map(([category, t]) => ({ category, total: t }))
+    .sort((a, b) => b.total - a.total);
+  const topCategory = categories[0] ?? null;
+
+  let biggestReceipt: RangeSummary['biggestReceipt'] = null;
+  for (const r of scoped) {
+    if (!biggestReceipt || r.totalAmount > biggestReceipt.total) {
+      biggestReceipt = {
+        receiptId: r.id,
+        storeName: r.storeName,
+        date: r.date,
+        total: r.totalAmount,
+      };
+    }
+  }
+
+  let biggestItem: RangeSummary['biggestItem'] = null;
+  for (const r of scoped) {
+    if (!r.lineItems) continue;
+    for (const it of r.lineItems) {
+      if (it.amount <= 0) continue;
+      if (!biggestItem || it.amount > biggestItem.amount) {
+        biggestItem = {
+          receiptId: r.id,
+          storeName: r.storeName,
+          itemName: it.name,
+          amount: it.amount,
+        };
+      }
+    }
+  }
+
+  return {
+    start: startOfLocalDay(start),
+    end: endOfLocalDay(end),
+    total,
+    receiptCount,
+    categories,
+    topCategory,
+    avgPerReceipt: receiptCount > 0 ? total / receiptCount : 0,
+    biggestReceipt,
+    biggestItem,
+  };
+}
+
+/**
+ * Compare the given range to the immediately-preceding window of the
+ * same length. e.g. May 1-31 → April 1-30 (31 days back). Returns the
+ * absolute and percentage change in total spend.
+ */
+export function periodOverPeriodDelta(
+  receipts: Receipt[],
+  start: Date,
+  end: Date,
+): PeriodDelta {
+  const s = startOfLocalDay(start);
+  const e = endOfLocalDay(end);
+  const lengthMs = e.getTime() - s.getTime();
+  const prevEnd = new Date(s.getTime() - 1); // 1ms before start
+  const prevStart = new Date(prevEnd.getTime() - lengthMs);
+  const current = summarizeRange(receipts, s, e);
+  const previous = summarizeRange(receipts, prevStart, prevEnd);
+  const delta = current.total - previous.total;
+  const deltaPct = previous.total > 0 ? delta / previous.total : null;
+  return { current, previous, delta, deltaPct };
 }
 
 /**
