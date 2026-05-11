@@ -180,7 +180,9 @@ export function ReceiptCard({ receipt, onDelete }: Props) {
         {onDelete && (
           <TouchableOpacity
             onPress={() => onDelete(receipt.id)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+            accessibilityRole="button"
+            accessibilityLabel="Delete receipt"
           >
             <Ionicons name="trash-outline" size={16} color={theme.colors.textMuted} />
           </TouchableOpacity>

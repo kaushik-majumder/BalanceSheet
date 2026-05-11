@@ -494,7 +494,12 @@ export default function SettingsScreen() {
                 secureTextEntry={!geminiVisible}
                 style={styles.keyInput}
               />
-              <Pressable onPress={() => setGeminiVisible((v) => !v)} hitSlop={8}>
+              <Pressable
+                onPress={() => setGeminiVisible((v) => !v)}
+                hitSlop={14}
+                accessibilityRole="button"
+                accessibilityLabel={geminiVisible ? 'Hide key' : 'Show key'}
+              >
                 <Ionicons
                   name={geminiVisible ? 'eye-off-outline' : 'eye-outline'}
                   size={20}
@@ -554,7 +559,12 @@ export default function SettingsScreen() {
                 secureTextEntry={!keyVisible}
                 style={styles.keyInput}
               />
-              <Pressable onPress={() => setKeyVisible((v) => !v)} hitSlop={8}>
+              <Pressable
+                onPress={() => setKeyVisible((v) => !v)}
+                hitSlop={14}
+                accessibilityRole="button"
+                accessibilityLabel={keyVisible ? 'Hide key' : 'Show key'}
+              >
                 <Ionicons
                   name={keyVisible ? 'eye-off-outline' : 'eye-outline'}
                   size={20}
