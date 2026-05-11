@@ -33,7 +33,10 @@ module.exports = ({ config }) => {
     android: {
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
-        backgroundColor: '#0F172A',
+        // Brand emerald — Android's mask shapes (circle, squircle,
+        // rounded square) all render with this color behind the
+        // white $/RS mark, matching the iOS icon's full background.
+        backgroundColor: '#10B981',
       },
       permissions: [
         'android.permission.CAMERA',

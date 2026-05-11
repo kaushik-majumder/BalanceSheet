@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Emerald squircle with a soft diagonal sheen, like an enameled
+         badge catching the light. Same energy as the Claude orange. -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#34D399" />
+      <stop offset="55%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#047857" />
+    </linearGradient>
+
+    <!-- A faint top-left highlight on the badge to add depth -->
+    <radialGradient id="sheen" cx="28%" cy="22%" r="55%">
+      <stop offset="0%"  stop-color="#FFFFFF" stop-opacity="0.18" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Subtle drop shadow under the white mark — tactile sticker feel -->
+    <filter id="markShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5" />
+      <feOffset dx="0" dy="6" />
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.22" />
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Squircle background (large corner radius). iOS will round it
+       further; Android adaptive icon masks it. Either way the design
+       holds because the mark sits well within the safe zone. -->
+  <rect x="0" y="0" width="1024" height="1024" rx="240" fill="url(#bg)" />
+  <rect x="0" y="0" width="1024" height="1024" rx="240" fill="url(#sheen)" />
+
+  <!-- A faint horizontal accent line behind the mark — references a
+       receipt's "subtotal/total" divider without spelling it out.
+       Lives in the lower third so it stays out of the safe-zone
+       center and doesn't fight with the mark. -->
+  <g opacity="0.18">
+    <rect x="270" y="745" width="120" height="10" rx="5" fill="#FFFFFF" />
+    <rect x="410" y="745" width="40"  height="10" rx="5" fill="#FFFFFF" />
+    <rect x="470" y="745" width="180" height="10" rx="5" fill="#FFFFFF" />
+    <rect x="670" y="745" width="80"  height="10" rx="5" fill="#FFFFFF" />
+  </g>
+
+  <!-- THE MARK
+       A single white "$"-style symbol whose two curves are actually
+       an R (top half) and an S (bottom half) sharing a vertical bar.
+       At a glance the eye reads "$" — a money-tracking app, makes
+       perfect sense. Slow down and:
+         • The TOP half is an R: closed bowl + tiny leg flick
+         • The BOTTOM half is an S: classic double curve
+         • The vertical bar threading both is the R's stem AND the $
+           sign's slash, doing double duty.
+       This is the "hidden in plain sight" version — $, R, and S
+       all coexist in one bold mark. -->
+
+  <g filter="url(#markShadow)" fill="#FFFFFF">
+    <!-- Vertical bar threading through both halves -->
+    <rect x="492" y="170" width="44" height="694" rx="22" />
+
+    <!-- TOP HALF: the R bowl. A bold closed-loop shape sitting on
+         the upper portion of the bar, with a small flick at the
+         bottom-right (the R's leg / the $ sign's upper curl). -->
+    <path d="
+      M 360 280
+      C 360 230 410 200 470 200
+      L 590 200
+      C 660 200 700 250 700 320
+      C 700 390 660 440 590 440
+      L 470 440
+      C 410 440 360 410 360 360
+      Z
+      M 590 290
+      L 470 290
+      C 450 290 450 310 470 350
+      L 590 350
+      C 620 350 620 290 590 290
+      Z
+    " fill-rule="evenodd" />
+    <!-- R leg flick extending down-right from the bowl -->
+    <path d="
+      M 600 440
+      L 700 600
+      L 620 600
+      L 540 460
+      Z
+    " />
+
+    <!-- BOTTOM HALF: the S. A bold sigmoid curve below the bar,
+         visually balanced against the R bowl above. -->
+    <path d="
+      M 656 600
+      C 700 600 720 640 700 680
+      C 680 720 600 700 540 680
+      C 460 660 380 670 350 730
+      C 320 800 400 860 500 860
+      C 600 860 680 820 700 760
+      L 670 760
+      C 660 800 600 820 520 820
+      C 440 820 410 770 470 750
+      C 540 720 620 760 680 730
+      C 730 700 740 620 700 590
+      C 720 600 660 600 656 600
+      Z
+    " />
+  </g>
+</svg>
