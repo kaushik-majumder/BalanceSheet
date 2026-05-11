@@ -1,5 +1,6 @@
-import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, Image } from 'react-native';
+import * as FileSystem from 'expo-file-system';
 import { useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,6 +40,17 @@ export function ReceiptCard({ receipt, onDelete }: Props) {
       alignItems: 'center',
       justifyContent: 'center',
       flexShrink: 0,
+      overflow: 'hidden',
+    },
+    thumb: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      width: 44,
+      height: 44,
+      borderRadius: t.radius.md,
     },
     iconText: {
       fontSize: t.font.lg,
@@ -86,6 +98,30 @@ export function ReceiptCard({ receipt, onDelete }: Props) {
   }));
   const router = useRouter();
 
+  // Verify the receipt's photo actually exists on disk so we don't
+  // render a broken Image overlay on top of the letter avatar.
+  // For legacy receipts whose imageUri is a stale cache path, the
+  // letter avatar stays visible (Image element never mounts).
+  const [thumbReady, setThumbReady] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    if (!receipt.imageUri) {
+      setThumbReady(false);
+      return;
+    }
+    (async () => {
+      try {
+        const info = await FileSystem.getInfoAsync(receipt.imageUri!);
+        if (mounted) setThumbReady(!!info.exists);
+      } catch {
+        if (mounted) setThumbReady(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [receipt.imageUri]);
+
   return (
     <TouchableOpacity
       activeOpacity={0.8}
@@ -102,6 +138,14 @@ export function ReceiptCard({ receipt, onDelete }: Props) {
           <Text style={styles.iconText}>
             {receipt.storeName.charAt(0).toUpperCase()}
           </Text>
+          {thumbReady && receipt.imageUri && (
+            <Image
+              source={{ uri: receipt.imageUri }}
+              style={styles.thumb}
+              resizeMode="cover"
+              onError={() => setThumbReady(false)}
+            />
+          )}
         </View>
         <View style={styles.info}>
           <Text style={styles.storeName} numberOfLines={1}>
