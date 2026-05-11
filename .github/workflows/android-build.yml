@@ -62,6 +62,19 @@ jobs:
       - name: Install EAS CLI
         run: npm install -g eas-cli@latest
 
+      - name: Write google-services.json
+        env:
+          GOOGLE_SERVICES_JSON_CONTENT: ${{ secrets.GOOGLE_SERVICES_JSON_CONTENT }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON_CONTENT" ]; then
+            echo "::error::Missing repo secret GOOGLE_SERVICES_JSON_CONTENT — paste the contents of google-services.json into Settings → Secrets → Actions."
+            exit 1
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON_CONTENT" > google-services.json
+          # Sanity check it's valid JSON before handing to Gradle
+          node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8'))"
+          echo "google-services.json written ($(wc -c < google-services.json) bytes)"
+
       - name: Determine profile
         id: profile
         run: |
