@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -21,9 +22,19 @@ import {
   CATEGORY_ICONS,
 } from '../constants/categories';
 import { getAllReceipts } from '../lib/database';
-import DateTimePicker, {
-  DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
+import { parseYmdLocal } from '../lib/parser';
+// Native date picker is a native dependency (added in this commit).
+// Existing OTA-only installs DON'T have it linked yet — they'd crash
+// on import. Resolve it dynamically so the screen still works as an
+// OTA: when the module is present, use the platform-native picker;
+// when it isn't, fall back to a text-input pair (defined below).
+let DateTimePicker: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+  DateTimePicker = require('@react-native-community/datetimepicker').default;
+} catch {
+  DateTimePicker = null;
+}
 import {
   CategoryTrend,
   MonthBucket,
@@ -276,28 +287,42 @@ export default function ReportsScreen() {
             {format(start, 'MMM d, yyyy')} — {format(end, 'MMM d, yyyy')}
           </Text>
 
-          {showStartPicker && (
+          {DateTimePicker && showStartPicker && (
             <DateTimePicker
               value={start}
               mode="date"
               display="default"
               maximumDate={end}
-              onChange={(_event: DateTimePickerEvent, picked?: Date) => {
+              onChange={(_event: unknown, picked?: Date) => {
                 setShowStartPicker(false);
                 if (picked) setStart(picked);
               }}
             />
           )}
-          {showEndPicker && (
+          {DateTimePicker && showEndPicker && (
             <DateTimePicker
               value={end}
               mode="date"
               display="default"
               minimumDate={start}
               maximumDate={new Date()}
-              onChange={(_event: DateTimePickerEvent, picked?: Date) => {
+              onChange={(_event: unknown, picked?: Date) => {
                 setShowEndPicker(false);
                 if (picked) setEnd(picked);
+              }}
+            />
+          )}
+
+          {/* Fallback when the native picker module isn't linked
+              (i.e. on the existing preview APK before its rebuild).
+              The user can type YYYY-MM-DD manually instead. */}
+          {!DateTimePicker && preset === 'custom' && (
+            <ManualDateRangeFallback
+              start={start}
+              end={end}
+              onChange={(s, e) => {
+                setStart(s);
+                setEnd(e);
               }}
             />
           )}
@@ -652,6 +677,64 @@ function TrendChart({
           </Pressable>
         );
       })}
+    </View>
+  );
+}
+
+/** Type-in-YYYY-MM-DD fallback used when the native date picker
+ *  module isn't linked. Each input commits on blur — invalid strings
+ *  are silently ignored so the user can keep typing without losing
+ *  their place. */
+function ManualDateRangeFallback({
+  start,
+  end,
+  onChange,
+}: {
+  start: Date;
+  end: Date;
+  onChange: (start: Date, end: Date) => void;
+}) {
+  const [startText, setStartText] = useState(format(start, 'yyyy-MM-dd'));
+  const [endText, setEndText] = useState(format(end, 'yyyy-MM-dd'));
+  return (
+    <View>
+      <Text style={styles.manualHint}>
+        Type dates as YYYY-MM-DD. (Native picker activates on next app
+        rebuild.)
+      </Text>
+      <View style={styles.manualRow}>
+        <TextInput
+          value={startText}
+          onChangeText={setStartText}
+          onEndEditing={() => {
+            const d = parseYmdLocal(startText);
+            if (d && d <= end) onChange(d, end);
+            else setStartText(format(start, 'yyyy-MM-dd'));
+          }}
+          placeholder="2026-05-01"
+          placeholderTextColor={theme.colors.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          maxLength={10}
+          style={styles.manualInput}
+        />
+        <Text style={styles.rangeDash}>→</Text>
+        <TextInput
+          value={endText}
+          onChangeText={setEndText}
+          onEndEditing={() => {
+            const d = parseYmdLocal(endText);
+            if (d && d >= start) onChange(start, d);
+            else setEndText(format(end, 'yyyy-MM-dd'));
+          }}
+          placeholder="2026-05-31"
+          placeholderTextColor={theme.colors.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          maxLength={10}
+          style={styles.manualInput}
+        />
+      </View>
     </View>
   );
 }
@@ -1017,5 +1100,29 @@ const styles = StyleSheet.create({
   recurringLabelBox: {
     flex: 1,
     minWidth: 0,
+  },
+  manualHint: {
+    color: theme.colors.textMuted,
+    fontSize: theme.font.xs,
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  manualRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  manualInput: {
+    color: theme.colors.textPrimary,
+    fontSize: theme.font.sm,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    minWidth: 130,
+    textAlign: 'center',
   },
 });
