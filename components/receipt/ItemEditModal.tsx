@@ -4,7 +4,6 @@ import {
   Modal,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -13,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Category, LineItem } from '../../types';
 import { ALL_CATEGORIES } from '../../constants/categories';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { TagChip } from '../ui/TagChip';
@@ -39,6 +38,62 @@ export function ItemEditModal({
    *  category picker alongside the 10 standard categories. */
   extraTags?: string[];
 }) {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    root: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: t.spacing.lg,
+      paddingVertical: t.spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+    },
+    title: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.lg,
+      fontWeight: '700',
+    },
+    content: {
+      padding: t.spacing.md,
+      gap: t.spacing.sm,
+    },
+    fieldCard: {
+      gap: t.spacing.sm,
+    },
+    fieldLabel: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.xs,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    input: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.md,
+      backgroundColor: t.colors.surfaceHigh,
+      borderRadius: t.radius.sm,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    categorySelector: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    categoryGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: t.spacing.xs,
+    },
+  }));
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<Category | string>('Other');
@@ -172,59 +227,3 @@ export function ItemEditModal({
     </Modal>
   );
 }
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  title: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.lg,
-    fontWeight: '700',
-  },
-  content: {
-    padding: theme.spacing.md,
-    gap: theme.spacing.sm,
-  },
-  fieldCard: {
-    gap: theme.spacing.sm,
-  },
-  fieldLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.xs,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  input: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    backgroundColor: theme.colors.surfaceHigh,
-    borderRadius: theme.radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  categorySelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  categoryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: theme.spacing.xs,
-  },
-});

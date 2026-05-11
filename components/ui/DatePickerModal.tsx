@@ -2,14 +2,13 @@ import React, { useState } from 'react';
 import {
   Modal,
   Pressable,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 
 /**
  * Pure-JS calendar date picker. No native modules — works on any
@@ -38,6 +37,121 @@ export function DatePickerModal({
   onClose: () => void;
   onSelect: (d: Date) => void;
 }) {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    backdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: t.spacing.md,
+    },
+    card: {
+      width: '100%',
+      maxWidth: 360,
+      backgroundColor: t.colors.surface,
+      borderRadius: t.radius.lg,
+      padding: t.spacing.md,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    title: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.md,
+      fontWeight: '700',
+      textAlign: 'center',
+      marginBottom: t.spacing.sm,
+    },
+    monthRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 4,
+      paddingVertical: 6,
+    },
+    monthBtn: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    monthLabel: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.md,
+      fontWeight: '700',
+    },
+    weekdayRow: {
+      flexDirection: 'row',
+      marginTop: 6,
+      marginBottom: 4,
+    },
+    weekdayCell: {
+      flex: 1,
+      textAlign: 'center',
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+    },
+    grid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    },
+    dayCell: {
+      width: `${100 / 7}%` as `${number}%`,
+      aspectRatio: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: t.radius.full,
+    },
+    dayCellSelected: {
+      backgroundColor: t.colors.primary,
+    },
+    dayText: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      fontWeight: '500',
+    },
+    dayTextDisabled: {
+      color: t.colors.textMuted,
+      opacity: 0.35,
+    },
+    dayTextToday: {
+      color: t.colors.primary,
+      fontWeight: '700',
+    },
+    dayTextSelected: {
+      color: '#fff',
+      fontWeight: '700',
+    },
+    footer: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 8,
+      marginTop: t.spacing.sm,
+    },
+    cancelBtn: {
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: t.radius.full,
+    },
+    cancelBtnText: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      fontWeight: '700',
+    },
+    doneBtn: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: t.radius.full,
+      backgroundColor: t.colors.primary,
+    },
+    doneBtnText: {
+      color: '#fff',
+      fontSize: t.font.sm,
+      fontWeight: '700',
+    },
+  }));
   // The month being browsed. Starts at initialDate's month, but the
   // user can flip back and forward without committing until they tap
   // a specific day.
@@ -183,118 +297,3 @@ export function DatePickerModal({
     </Modal>
   );
 }
-
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.spacing.md,
-  },
-  card: {
-    width: '100%',
-    maxWidth: 360,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  title: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: theme.spacing.sm,
-  },
-  monthRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 4,
-    paddingVertical: 6,
-  },
-  monthBtn: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  monthLabel: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    fontWeight: '700',
-  },
-  weekdayRow: {
-    flexDirection: 'row',
-    marginTop: 6,
-    marginBottom: 4,
-  },
-  weekdayCell: {
-    flex: 1,
-    textAlign: 'center',
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  dayCell: {
-    width: `${100 / 7}%`,
-    aspectRatio: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: theme.radius.full,
-  },
-  dayCellSelected: {
-    backgroundColor: theme.colors.primary,
-  },
-  dayText: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    fontWeight: '500',
-  },
-  dayTextDisabled: {
-    color: theme.colors.textMuted,
-    opacity: 0.35,
-  },
-  dayTextToday: {
-    color: theme.colors.primary,
-    fontWeight: '700',
-  },
-  dayTextSelected: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-    marginTop: theme.spacing.sm,
-  },
-  cancelBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: theme.radius.full,
-  },
-  cancelBtnText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '700',
-  },
-  doneBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: theme.radius.full,
-    backgroundColor: theme.colors.primary,
-  },
-  doneBtnText: {
-    color: '#fff',
-    fontSize: theme.font.sm,
-    fontWeight: '700',
-  },
-});

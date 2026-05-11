@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1242 2436" width="1242" height="2436">
+  <!-- Splash screen: the same emerald squircle mark centered on the
+       app's navy background. Expo's splash config uses resizeMode
+       contain, so the navy you see here matches backgroundColor
+       in app.config.js (#0F172A). -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#34D399" />
+      <stop offset="55%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#047857" />
+    </linearGradient>
+    <radialGradient id="sheen" cx="28%" cy="22%" r="55%">
+      <stop offset="0%"  stop-color="#FFFFFF" stop-opacity="0.18" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    </radialGradient>
+    <filter id="markShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5" />
+      <feOffset dx="0" dy="6" />
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.22" />
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1242" height="2436" fill="#0F172A" />
+
+  <!-- The badge: 600x600, centered vertically and horizontally -->
+  <g transform="translate(321, 918)">
+    <rect x="0" y="0" width="600" height="600" rx="140" fill="url(#bg)" />
+    <rect x="0" y="0" width="600" height="600" rx="140" fill="url(#sheen)" />
+
+    <g opacity="0.18">
+      <rect x="158" y="437" width="70"  height="6" rx="3" fill="#FFFFFF" />
+      <rect x="240" y="437" width="24"  height="6" rx="3" fill="#FFFFFF" />
+      <rect x="276" y="437" width="105" height="6" rx="3" fill="#FFFFFF" />
+      <rect x="393" y="437" width="47"  height="6" rx="3" fill="#FFFFFF" />
+    </g>
+
+    <!-- Scaled-down version of the mark to fit a 600x600 badge -->
+    <g transform="scale(0.586)" filter="url(#markShadow)" fill="#FFFFFF">
+      <rect x="492" y="170" width="44" height="694" rx="22" />
+      <path d="
+        M 360 280
+        C 360 230 410 200 470 200
+        L 590 200
+        C 660 200 700 250 700 320
+        C 700 390 660 440 590 440
+        L 470 440
+        C 410 440 360 410 360 360
+        Z
+        M 590 290
+        L 470 290
+        C 450 290 450 310 470 350
+        L 590 350
+        C 620 350 620 290 590 290
+        Z
+      " fill-rule="evenodd" />
+      <path d="
+        M 600 440
+        L 700 600
+        L 620 600
+        L 540 460
+        Z
+      " />
+      <path d="
+        M 656 600
+        C 700 600 720 640 700 680
+        C 680 720 600 700 540 680
+        C 460 660 380 670 350 730
+        C 320 800 400 860 500 860
+        C 600 860 680 820 700 760
+        L 670 760
+        C 660 800 600 820 520 820
+        C 440 820 410 770 470 750
+        C 540 720 620 760 680 730
+        C 730 700 740 620 700 590
+        C 720 600 660 600 656 600
+        Z
+      " />
+    </g>
+  </g>
+</svg>

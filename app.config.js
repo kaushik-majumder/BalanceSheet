@@ -33,7 +33,10 @@ module.exports = ({ config }) => {
     android: {
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
-        backgroundColor: '#0F172A',
+        // Teal that matches the icon's gradient average. The foreground
+        // PNG already fills edge-to-edge with the teal→blue gradient, so
+        // this only shows if a device mask crops past the foreground.
+        backgroundColor: '#019B99',
       },
       permissions: [
         'android.permission.CAMERA',

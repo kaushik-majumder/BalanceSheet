@@ -5,7 +5,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -13,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
-import { theme } from '../constants/theme';
+import { Theme, useStyles, useTheme } from '../constants/theme';
 import {
   ConfirmationResult,
   confirmPhoneCode,
@@ -29,6 +28,7 @@ type Tab = 'email' | 'phone' | 'google';
 
 export default function AuthScreen() {
   const [tab, setTab] = useState<Tab>('email');
+  const styles = useStyles(makeStyles);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -77,6 +77,8 @@ function TabButton({
   onPress: () => void;
   icon: keyof typeof Ionicons.glyphMap;
 }) {
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
   return (
     <Pressable
       onPress={onPress}
@@ -94,6 +96,8 @@ function TabButton({
 }
 
 function EmailForm() {
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -180,6 +184,8 @@ function EmailForm() {
 }
 
 function PhoneForm() {
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
@@ -266,6 +272,8 @@ function PhoneForm() {
 }
 
 function GoogleForm() {
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
   const [loading, setLoading] = useState(false);
 
   const onPress = async () => {
@@ -300,6 +308,8 @@ function Field({
   label,
   ...input
 }: { label: string } & React.ComponentProps<typeof TextInput>) {
+  const theme = useTheme();
+  const styles = useStyles(makeStyles);
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -314,108 +324,108 @@ function Field({
 
 const humanizeError = humanizeAuthError;
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
+const makeStyles = (t: Theme) => ({
+  container: { flex: 1, backgroundColor: t.colors.background },
   scroll: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
+    paddingHorizontal: t.spacing.lg,
+    paddingTop: t.spacing.lg,
+    paddingBottom: t.spacing.xl,
   },
   header: {
-    alignItems: 'center',
-    marginBottom: theme.spacing.xl,
+    alignItems: 'center' as const,
+    marginBottom: t.spacing.xl,
   },
   brand: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xxxl,
-    fontWeight: '700',
-    marginBottom: theme.spacing.xs,
+    color: t.colors.textPrimary,
+    fontSize: t.font.xxxl,
+    fontWeight: '700' as const,
+    marginBottom: t.spacing.xs,
   },
   tagline: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.md,
-    textAlign: 'center',
+    color: t.colors.textSecondary,
+    fontSize: t.font.md,
+    textAlign: 'center' as const,
   },
   tabs: {
-    flexDirection: 'row',
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.md,
+    flexDirection: 'row' as const,
+    backgroundColor: t.colors.surface,
+    borderRadius: t.radius.md,
     padding: 4,
-    marginBottom: theme.spacing.lg,
+    marginBottom: t.spacing.lg,
   },
   tabBtn: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
     paddingVertical: 10,
-    borderRadius: theme.radius.sm,
+    borderRadius: t.radius.sm,
   },
   tabBtnActive: {
-    backgroundColor: theme.colors.primaryFaint,
+    backgroundColor: t.colors.primaryFaint,
   },
   tabBtnText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
+    color: t.colors.textSecondary,
+    fontSize: t.font.sm,
+    fontWeight: '600' as const,
   },
   tabBtnTextActive: {
-    color: theme.colors.primary,
+    color: t.colors.primary,
   },
   formWrap: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.lg,
+    backgroundColor: t.colors.surface,
+    borderRadius: t.radius.lg,
+    padding: t.spacing.lg,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: t.colors.border,
   },
   field: {
-    marginBottom: theme.spacing.md,
+    marginBottom: t.spacing.md,
   },
   fieldLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-    marginBottom: theme.spacing.xs,
+    color: t.colors.textSecondary,
+    fontSize: t.font.sm,
+    fontWeight: '600' as const,
+    marginBottom: t.spacing.xs,
   },
   input: {
-    backgroundColor: theme.colors.background,
-    color: theme.colors.textPrimary,
-    borderRadius: theme.radius.md,
-    paddingHorizontal: theme.spacing.md,
+    backgroundColor: t.colors.background,
+    color: t.colors.textPrimary,
+    borderRadius: t.radius.md,
+    paddingHorizontal: t.spacing.md,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    fontSize: theme.font.md,
+    borderColor: t.colors.border,
+    fontSize: t.font.md,
   },
   linkRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: theme.spacing.md,
+    flexDirection: 'row' as const,
+    justifyContent: 'space-between' as const,
+    alignItems: 'center' as const,
+    marginTop: t.spacing.md,
   },
   link: {
-    color: theme.colors.primary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
+    color: t.colors.primary,
+    fontSize: t.font.sm,
+    fontWeight: '600' as const,
   },
   linkMuted: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '500',
+    color: t.colors.textSecondary,
+    fontSize: t.font.sm,
+    fontWeight: '500' as const,
   },
   helper: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    marginBottom: theme.spacing.md,
+    color: t.colors.textSecondary,
+    fontSize: t.font.sm,
+    marginBottom: t.spacing.md,
     lineHeight: 20,
   },
   legal: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    textAlign: 'center',
-    marginTop: theme.spacing.lg,
-    paddingHorizontal: theme.spacing.md,
+    color: t.colors.textMuted,
+    fontSize: t.font.xs,
+    textAlign: 'center' as const,
+    marginTop: t.spacing.lg,
+    paddingHorizontal: t.spacing.md,
     lineHeight: 16,
   },
 });

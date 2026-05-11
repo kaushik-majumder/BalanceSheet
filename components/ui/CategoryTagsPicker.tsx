@@ -2,14 +2,13 @@ import React, { useState } from 'react';
 import {
   Alert,
   Pressable,
-  StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ALL_CATEGORIES } from '../../constants/categories';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 import { TagChip } from './TagChip';
 
 /**
@@ -28,6 +27,70 @@ export function CategoryTagsPicker({
   tags: string[];
   onChange: (next: string[]) => void;
 }) {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    root: { gap: 8 },
+    row: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    emptyHint: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+    },
+    sectionHint: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+      marginTop: 6,
+      marginBottom: 2,
+    },
+    customBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      alignSelf: 'flex-start',
+      marginTop: 4,
+    },
+    customBtnText: {
+      color: t.colors.primary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+    },
+    customRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 4,
+    },
+    customInput: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      borderRadius: t.radius.sm,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    customSaveBtn: {
+      backgroundColor: t.colors.primary,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: t.radius.sm,
+    },
+    customSaveText: {
+      color: '#fff',
+      fontSize: t.font.sm,
+      fontWeight: '700',
+    },
+    customSelectedHint: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+      fontStyle: 'italic',
+    },
+  }));
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState('');
 
@@ -137,67 +200,3 @@ export function CategoryTagsPicker({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { gap: 8 },
-  row: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  emptyHint: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-  },
-  sectionHint: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    marginTop: 6,
-    marginBottom: 2,
-  },
-  customBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    alignSelf: 'flex-start',
-    marginTop: 4,
-  },
-  customBtnText: {
-    color: theme.colors.primary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-  },
-  customRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  customInput: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    borderRadius: theme.radius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  customSaveBtn: {
-    backgroundColor: theme.colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: theme.radius.sm,
-  },
-  customSaveText: {
-    color: '#fff',
-    fontSize: theme.font.sm,
-    fontWeight: '700',
-  },
-  customSelectedHint: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    fontStyle: 'italic',
-  },
-});

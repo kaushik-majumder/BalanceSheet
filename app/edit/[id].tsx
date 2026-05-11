@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
   ScrollView,
   TextInput,
   TouchableOpacity,
@@ -25,8 +24,9 @@ import {
 } from '../../lib/database';
 import { refineUncategorizedItems } from '../../lib/itemClassifier';
 import { parseYmdLocal } from '../../lib/parser';
+import { notifySuccess, tapLight, tapMedium } from '../../lib/haptics';
 import { Receipt, Category, LineItem } from '../../types';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
@@ -96,6 +96,314 @@ export default function EditReceiptScreenWrapped() {
 }
 
 function EditReceiptScreen() {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    screen: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    centered: {
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    content: {
+      padding: t.spacing.md,
+      gap: t.spacing.sm,
+      paddingBottom: 40,
+    },
+    notFoundText: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.lg,
+      marginBottom: t.spacing.md,
+    },
+    image: {
+      width: '100%',
+      height: 200,
+      borderRadius: t.radius.lg,
+      marginBottom: t.spacing.xs,
+    },
+    meta: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: 4,
+      marginBottom: t.spacing.xs,
+    },
+    metaText: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+    },
+    fieldCard: {
+      gap: t.spacing.sm,
+    },
+    fieldLabel: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.xs,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    input: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.md,
+      backgroundColor: t.colors.surfaceHigh,
+      borderRadius: t.radius.sm,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    inputMultiline: {
+      minHeight: 72,
+      paddingTop: 10,
+    },
+    categorySelector: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    categoryGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: t.spacing.xs,
+    },
+    categoryOption: {
+      borderRadius: t.radius.full,
+      borderWidth: 1,
+      borderColor: 'transparent',
+      padding: 2,
+    },
+    lineItemRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingVertical: 5,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+    },
+    lineItemName: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      flex: 1,
+      marginRight: 8,
+    },
+    lineItemAmount: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+    },
+    categoryGroup: {
+      marginTop: t.spacing.sm,
+    },
+    categoryGroupHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingBottom: 6,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.borderLight,
+    },
+    categoryGroupTotal: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      fontWeight: '700',
+    },
+    totalsBlock: {
+      marginTop: t.spacing.md,
+      paddingTop: t.spacing.sm,
+      borderTopWidth: 1,
+      borderTopColor: t.colors.borderLight,
+    },
+    totalsRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingVertical: 4,
+    },
+    totalsRowGrand: {
+      marginTop: t.spacing.xs,
+      paddingTop: t.spacing.sm,
+      borderTopWidth: 1,
+      borderTopColor: t.colors.border,
+    },
+    totalsLabel: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+    },
+    totalsValue: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+    },
+    totalsLabelGrand: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.md,
+      fontWeight: '700',
+    },
+    totalsValueGrand: {
+      color: t.colors.primary,
+      fontSize: t.font.lg,
+      fontWeight: '800',
+    },
+    modalRoot: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: t.spacing.lg,
+      paddingVertical: t.spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+    },
+    modalTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.lg,
+      fontWeight: '700',
+    },
+    modalScroll: {
+      flex: 1,
+    },
+    modalContent: {
+      padding: t.spacing.lg,
+    },
+    modalText: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      fontFamily: 'monospace',
+      lineHeight: 18,
+    },
+    rawTextLink: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      marginTop: t.spacing.sm,
+      paddingVertical: 8,
+    },
+    rawTextLinkText: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.xs,
+      fontWeight: '600',
+    },
+    itemsCardHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    tapHint: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+    },
+    saveBtn: {
+      marginTop: t.spacing.sm,
+    },
+    deleteBtn: {
+      marginTop: t.spacing.xs,
+    },
+    lineItemRowSelected: {
+      backgroundColor: `${t.colors.primary}1A`,
+      borderRadius: t.radius.sm,
+    },
+    bulkBar: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: t.spacing.lg,
+      paddingTop: t.spacing.md,
+      paddingBottom: t.spacing.lg,
+      backgroundColor: t.colors.surface,
+      borderTopWidth: 1,
+      borderTopColor: t.colors.border,
+    },
+    bulkBarLabel: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+    },
+    bulkBarPrimary: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: t.colors.primary,
+      paddingHorizontal: t.spacing.md,
+      paddingVertical: 10,
+      borderRadius: t.radius.full,
+    },
+    bulkBarPrimaryText: {
+      color: '#fff',
+      fontWeight: '700',
+      fontSize: t.font.sm,
+    },
+    bulkPickerBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      justifyContent: 'flex-end',
+    },
+    bulkPickerSheet: {
+      backgroundColor: t.colors.surface,
+      paddingHorizontal: t.spacing.lg,
+      paddingTop: t.spacing.lg,
+      paddingBottom: t.spacing.xxl,
+      borderTopLeftRadius: t.radius.xl,
+      borderTopRightRadius: t.radius.xl,
+    },
+    bulkPickerTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.lg,
+      fontWeight: '700',
+      marginBottom: t.spacing.md,
+    },
+    bulkPickerGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    bulkPickerOption: {
+      // TagChip handles its own padding; no wrapper styling needed
+    },
+    bulkPickerCustomLabel: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.xs,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      marginTop: t.spacing.lg,
+      marginBottom: t.spacing.xs,
+    },
+    bulkPickerCustomRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    bulkPickerCustomInput: {
+      flex: 1,
+      color: t.colors.textPrimary,
+      fontSize: t.font.md,
+      backgroundColor: t.colors.surfaceHigh,
+      borderRadius: t.radius.sm,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    bulkPickerCustomBtn: {
+      backgroundColor: t.colors.primary,
+      paddingHorizontal: 16,
+      paddingVertical: 11,
+      borderRadius: t.radius.sm,
+    },
+    bulkPickerCustomBtnText: {
+      color: '#fff',
+      fontWeight: '700',
+      fontSize: t.font.sm,
+    },
+  }));
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 
@@ -224,6 +532,7 @@ function EditReceiptScreen() {
         notes: notes.trim() || undefined,
         lineItems: items,
       });
+      notifySuccess();
       router.back();
     } catch {
       Alert.alert('Error', 'Failed to save changes.');
@@ -240,6 +549,7 @@ function EditReceiptScreen() {
         style: 'destructive',
         onPress: async () => {
           if (!receipt) return;
+          tapMedium();
           await deleteReceipt(receipt.id);
           router.back();
         },
@@ -266,6 +576,7 @@ function EditReceiptScreen() {
 
   const applyBulkCategory = (category: Category | string) => {
     if (!receipt || selectedIds.size === 0) return;
+    tapLight();
     const next = items.map((it) =>
       selectedIds.has(it.id) ? { ...it, category } : it,
     );
@@ -677,310 +988,3 @@ function EditReceiptScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  centered: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  content: {
-    padding: theme.spacing.md,
-    gap: theme.spacing.sm,
-    paddingBottom: 40,
-  },
-  notFoundText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.lg,
-    marginBottom: theme.spacing.md,
-  },
-  image: {
-    width: '100%',
-    height: 200,
-    borderRadius: theme.radius.lg,
-    marginBottom: theme.spacing.xs,
-  },
-  meta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: 4,
-    marginBottom: theme.spacing.xs,
-  },
-  metaText: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-  },
-  fieldCard: {
-    gap: theme.spacing.sm,
-  },
-  fieldLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.xs,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  input: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    backgroundColor: theme.colors.surfaceHigh,
-    borderRadius: theme.radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  inputMultiline: {
-    minHeight: 72,
-    paddingTop: 10,
-  },
-  categorySelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  categoryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: theme.spacing.xs,
-  },
-  categoryOption: {
-    borderRadius: theme.radius.full,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    padding: 2,
-  },
-  lineItemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 5,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  lineItemName: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    flex: 1,
-    marginRight: 8,
-  },
-  lineItemAmount: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-  },
-  categoryGroup: {
-    marginTop: theme.spacing.sm,
-  },
-  categoryGroupHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.borderLight,
-  },
-  categoryGroupTotal: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    fontWeight: '700',
-  },
-  totalsBlock: {
-    marginTop: theme.spacing.md,
-    paddingTop: theme.spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.borderLight,
-  },
-  totalsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  totalsRowGrand: {
-    marginTop: theme.spacing.xs,
-    paddingTop: theme.spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  totalsLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-  },
-  totalsValue: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-  },
-  totalsLabelGrand: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    fontWeight: '700',
-  },
-  totalsValueGrand: {
-    color: theme.colors.primary,
-    fontSize: theme.font.lg,
-    fontWeight: '800',
-  },
-  modalRoot: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  modalTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.lg,
-    fontWeight: '700',
-  },
-  modalScroll: {
-    flex: 1,
-  },
-  modalContent: {
-    padding: theme.spacing.lg,
-  },
-  modalText: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    fontFamily: 'monospace',
-    lineHeight: 18,
-  },
-  rawTextLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: theme.spacing.sm,
-    paddingVertical: 8,
-  },
-  rawTextLinkText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.xs,
-    fontWeight: '600',
-  },
-  itemsCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  tapHint: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-  },
-  saveBtn: {
-    marginTop: theme.spacing.sm,
-  },
-  deleteBtn: {
-    marginTop: theme.spacing.xs,
-  },
-  lineItemRowSelected: {
-    backgroundColor: `${theme.colors.primary}1A`,
-    borderRadius: theme.radius.sm,
-  },
-  bulkBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing.md,
-    paddingBottom: theme.spacing.lg,
-    backgroundColor: theme.colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  bulkBarLabel: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-  },
-  bulkBarPrimary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: theme.colors.primary,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: 10,
-    borderRadius: theme.radius.full,
-  },
-  bulkBarPrimaryText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: theme.font.sm,
-  },
-  bulkPickerBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  bulkPickerSheet: {
-    backgroundColor: theme.colors.surface,
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.xxl,
-    borderTopLeftRadius: theme.radius.xl,
-    borderTopRightRadius: theme.radius.xl,
-  },
-  bulkPickerTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.lg,
-    fontWeight: '700',
-    marginBottom: theme.spacing.md,
-  },
-  bulkPickerGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  bulkPickerOption: {
-    // TagChip handles its own padding; no wrapper styling needed
-  },
-  bulkPickerCustomLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.xs,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginTop: theme.spacing.lg,
-    marginBottom: theme.spacing.xs,
-  },
-  bulkPickerCustomRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  bulkPickerCustomInput: {
-    flex: 1,
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    backgroundColor: theme.colors.surfaceHigh,
-    borderRadius: theme.radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  bulkPickerCustomBtn: {
-    backgroundColor: theme.colors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    borderRadius: theme.radius.sm,
-  },
-  bulkPickerCustomBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: theme.font.sm,
-  },
-});

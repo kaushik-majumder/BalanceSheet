@@ -2,29 +2,120 @@ import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
   FlatList,
   TextInput,
   TouchableOpacity,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getAllReceipts, deleteReceipt, searchReceipts } from '../../lib/database';
 import { Receipt, Category } from '../../types';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { ReceiptListSkeleton } from '../../components/ui/Skeleton';
+import { useToast } from '../../components/ui/Toast';
+import { notifySuccess, tapMedium } from '../../lib/haptics';
 import { receiptMatchesCategory } from '../../lib/receiptFilter';
 
 const FILTER_ALL = 'All' as const;
 type Filter = typeof FILTER_ALL | Category;
 
 export default function HistoryScreen() {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    screen: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    searchContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      margin: t.spacing.md,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      backgroundColor: t.colors.surface,
+      borderRadius: t.radius.md,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    searchInput: {
+      flex: 1,
+      color: t.colors.textPrimary,
+      fontSize: t.font.md,
+    },
+    filterList: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      paddingHorizontal: t.spacing.md,
+      paddingBottom: t.spacing.sm,
+      gap: 8,
+    },
+    chip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: t.radius.full,
+      backgroundColor: t.colors.surface,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    chipIcon: {
+      fontSize: 12,
+    },
+    chipLabel: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      fontWeight: '500',
+    },
+    summaryRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: t.spacing.md,
+      paddingBottom: t.spacing.sm,
+    },
+    summaryCount: {
+      color: t.colors.textMuted,
+      fontSize: t.font.sm,
+    },
+    summaryTotal: {
+      color: t.colors.primary,
+      fontSize: t.font.sm,
+      fontWeight: '700',
+    },
+    listContent: {
+      paddingHorizontal: t.spacing.md,
+      paddingBottom: 32,
+    },
+    empty: {
+      alignItems: 'center',
+      paddingTop: 80,
+      gap: t.spacing.sm,
+    },
+    emptyTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.xl,
+      fontWeight: '700',
+      marginTop: t.spacing.sm,
+    },
+    emptyText: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      textAlign: 'center',
+      maxWidth: 260,
+    },
+  }));
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<Filter>(FILTER_ALL);
   const params = useLocalSearchParams<{ category?: string }>();
+  const toast = useToast();
 
   // When the dashboard navigates here with `?category=X`, pre-select X
   // as the filter. Re-fires whenever a fresh navigation arrives.
@@ -37,14 +128,34 @@ export default function HistoryScreen() {
     }
   }, [params.category]);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+
   const load = useCallback(async () => {
     const data = await getAllReceipts();
     setReceipts(data);
   }, []);
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      if (query.trim()) {
+        const results = await searchReceipts(query.trim());
+        setReceipts(results);
+      } else {
+        await load();
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, [query, load]);
+
   useFocusEffect(
     useCallback(() => {
-      load();
+      (async () => {
+        await load();
+        setInitialLoading(false);
+      })();
     }, [load]),
   );
 
@@ -59,17 +170,30 @@ export default function HistoryScreen() {
   };
 
   const handleDelete = (id: string) => {
-    Alert.alert('Delete Receipt', 'Are you sure you want to delete this receipt?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteReceipt(id);
-          await load();
-        },
+    const target = receipts.find((r) => r.id === id);
+    if (!target) return;
+    tapMedium();
+    // Optimistically remove from the list so the user sees instant
+    // feedback. Defer the actual DB delete by 5 seconds so they can
+    // tap Undo on the toast before it lands.
+    setReceipts((prev) => prev.filter((r) => r.id !== id));
+    const timer = setTimeout(() => {
+      deleteReceipt(id).catch(() => {
+        // If the eventual delete failed, refetch so the UI matches
+        // reality.
+        load();
+      });
+    }, 5000);
+    toast.show({
+      message: `Deleted ${target.storeName}`,
+      kind: 'success',
+      undoLabel: 'Undo',
+      onUndo: () => {
+        clearTimeout(timer);
+        load(); // restore from DB (it was never actually deleted)
       },
-    ]);
+      durationMs: 5000,
+    });
   };
 
   // A receipt matches the active filter when EITHER:
@@ -147,111 +271,47 @@ export default function HistoryScreen() {
         </View>
       )}
 
-      {/* Receipt list */}
-      <FlatList
-        data={filtered}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <ReceiptCard receipt={item} onDelete={handleDelete} />
-        )}
-        contentContainerStyle={styles.listContent}
-        ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Ionicons name="receipt-outline" size={52} color={theme.colors.textMuted} />
-            <Text style={styles.emptyTitle}>No receipts found</Text>
-            <Text style={styles.emptyText}>
-              {query ? 'Try a different search term' : 'Scan your first receipt using the camera tab'}
-            </Text>
-          </View>
-        }
-      />
+      {/* Receipt list — show skeleton placeholders during the first
+          load so the user sees the expected layout instead of the
+          empty state flashing for a fraction of a second. */}
+      {initialLoading ? (
+        <View style={styles.listContent}>
+          <ReceiptListSkeleton count={5} />
+        </View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <ReceiptCard receipt={item} onDelete={handleDelete} />
+          )}
+          contentContainerStyle={styles.listContent}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.primary}
+            />
+          }
+          ListEmptyComponent={
+            query ? (
+              <EmptyState
+                icon="search-outline"
+                title="No receipts found"
+                description={`No receipts match "${query}". Try a different search term or clear the search to see everything.`}
+              />
+            ) : (
+              <EmptyState
+                icon="receipt-outline"
+                title="No receipts yet"
+                description="Scan your first receipt with the camera tab and it'll show up here, grouped by category and date."
+              />
+            )
+          }
+        />
+      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    margin: theme.spacing.md,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  searchInput: {
-    flex: 1,
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-  },
-  filterList: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: theme.spacing.md,
-    paddingBottom: theme.spacing.sm,
-    gap: 8,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: theme.radius.full,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  chipIcon: {
-    fontSize: 12,
-  },
-  chipLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '500',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.md,
-    paddingBottom: theme.spacing.sm,
-  },
-  summaryCount: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.sm,
-  },
-  summaryTotal: {
-    color: theme.colors.primary,
-    fontSize: theme.font.sm,
-    fontWeight: '700',
-  },
-  listContent: {
-    paddingHorizontal: theme.spacing.md,
-    paddingBottom: 32,
-  },
-  empty: {
-    alignItems: 'center',
-    paddingTop: 80,
-    gap: theme.spacing.sm,
-  },
-  emptyTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xl,
-    fontWeight: '700',
-    marginTop: theme.spacing.sm,
-  },
-  emptyText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    textAlign: 'center',
-    maxWidth: 260,
-  },
-});

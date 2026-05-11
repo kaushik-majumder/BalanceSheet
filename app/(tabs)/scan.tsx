@@ -30,6 +30,7 @@ import {
 } from '../../lib/database';
 import { parseReceiptText, parseYmdLocal } from '../../lib/parser';
 import { persistReceiptImage } from '../../lib/receiptPhoto';
+import { notifySuccess } from '../../lib/haptics';
 import {
   parseReceiptWithGemini,
   parseGeminiPayload,
@@ -37,7 +38,7 @@ import {
 import { parseReceiptWithCloudflare } from '../../lib/cloudflareReceiptParse';
 import { getGeminiApiKey } from '../../lib/secureStorage';
 import { ParsedReceipt, Category, LineItem } from '../../types';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 import { ALL_CATEGORIES } from '../../constants/categories';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
@@ -84,6 +85,337 @@ function uniqueItemCategories(items: LineItem[]): string[] {
 
 export default function ScanScreen() {
   const router = useRouter();
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    screen: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    centered: {
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    // Idle
+    idleContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: t.spacing.xl,
+      gap: t.spacing.md,
+    },
+    iconRing: {
+      width: 112,
+      height: 112,
+      borderRadius: 56,
+      backgroundColor: t.colors.primaryFaint,
+      borderWidth: 2,
+      borderColor: `${t.colors.primary}44`,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: t.spacing.sm,
+    },
+    idleTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.xxl,
+      fontWeight: '800',
+    },
+    idleSubtitle: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.md,
+      textAlign: 'center',
+      lineHeight: 22,
+    },
+    actionRow: {
+      flexDirection: 'row',
+      gap: t.spacing.md,
+      marginTop: t.spacing.md,
+      width: '100%',
+    },
+    actionCard: {
+      flex: 1,
+      borderRadius: t.radius.xl,
+      overflow: 'hidden',
+    },
+    actionGradient: {
+      padding: t.spacing.lg,
+      alignItems: 'center',
+      gap: 6,
+      borderRadius: t.radius.xl,
+    },
+    actionLabel: {
+      color: '#fff',
+      fontSize: t.font.lg,
+      fontWeight: '700',
+    },
+    actionSub: {
+      color: 'rgba(255,255,255,0.75)',
+      fontSize: t.font.xs,
+    },
+    manualEntry: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      borderRadius: t.radius.full,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surfaceHigh,
+      marginTop: t.spacing.xs,
+    },
+    manualEntryText: {
+      color: t.colors.primary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+    },
+    hint: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+      textAlign: 'center',
+      marginTop: t.spacing.sm,
+    },
+    // Processing
+    processingImage: {
+      width: '100%',
+      height: 260,
+      opacity: 0.35,
+    },
+    processingOverlay: {
+      position: 'absolute',
+      alignItems: 'center',
+      gap: 12,
+    },
+    processingText: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.xl,
+      fontWeight: '700',
+    },
+    processingSubText: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+    },
+    // Review
+    reviewContent: {
+      padding: t.spacing.md,
+      gap: t.spacing.sm,
+      paddingBottom: 40,
+    },
+    receiptThumb: {
+      width: '100%',
+      height: 180,
+      borderRadius: t.radius.lg,
+      marginBottom: t.spacing.sm,
+    },
+    reviewHeader: {
+      marginBottom: t.spacing.xs,
+    },
+    reviewTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.xl,
+      fontWeight: '800',
+    },
+    reviewSub: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+    },
+    aiChipPending: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: t.radius.full,
+      backgroundColor: t.colors.primaryFaint,
+      marginTop: 8,
+    },
+    aiChipApplied: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: t.radius.full,
+      backgroundColor: t.colors.primaryFaint,
+      borderWidth: 1,
+      borderColor: t.colors.primary,
+      marginTop: 8,
+    },
+    aiChipText: {
+      color: t.colors.primary,
+      fontSize: t.font.xs,
+      fontWeight: '700',
+    },
+    aiChipError: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: t.radius.full,
+      backgroundColor: 'rgba(245, 158, 11, 0.08)',
+      borderWidth: 1,
+      borderColor: 'rgba(245, 158, 11, 0.4)',
+      marginTop: 8,
+      maxWidth: '100%',
+    },
+    aiChipErrorText: {
+      color: t.colors.warning,
+      fontSize: t.font.xs,
+      fontWeight: '600',
+      flexShrink: 1,
+    },
+    aiRetryBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: t.radius.full,
+      backgroundColor: t.colors.surface,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      marginTop: 8,
+    },
+    itemCategoriesRow: {
+      marginTop: t.spacing.sm,
+      paddingTop: t.spacing.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.colors.border,
+    },
+    itemCategoriesLabel: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+      marginBottom: 6,
+    },
+    itemCategoriesChips: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    fieldCard: {
+      gap: t.spacing.sm,
+    },
+    fieldLabel: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.xs,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    input: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.md,
+      backgroundColor: t.colors.surfaceHigh,
+      borderRadius: t.radius.sm,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    inputMultiline: {
+      minHeight: 72,
+      paddingTop: 10,
+    },
+    categorySelector: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    categoryGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: t.spacing.xs,
+    },
+    categoryOption: {
+      borderRadius: t.radius.full,
+      borderWidth: 1,
+      borderColor: 'transparent',
+      padding: 2,
+    },
+    itemsHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    itemsHint: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+    },
+    lineItemRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+    },
+    lineItemRowPressed: {
+      backgroundColor: t.colors.surfaceHigh,
+    },
+    itemModalRoot: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    itemModalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: t.spacing.lg,
+      paddingVertical: t.spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+    },
+    itemModalTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.lg,
+      fontWeight: '700',
+    },
+    itemModalContent: {
+      padding: t.spacing.md,
+      gap: t.spacing.sm,
+    },
+    lineItemName: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      flex: 1,
+      marginRight: 4,
+    },
+    lineItemAmount: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+      minWidth: 56,
+      textAlign: 'right',
+    },
+    moreItemsBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      marginTop: 8,
+      paddingVertical: 8,
+    },
+    moreItemsText: {
+      color: t.colors.primary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+    },
+    buttonRow: {
+      flexDirection: 'row',
+      gap: t.spacing.sm,
+      marginTop: t.spacing.sm,
+    },
+    btnHalf: {
+      flex: 1,
+    },
+  }));
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [parsed, setParsed] = useState<ParsedReceipt | null>(null);
@@ -298,6 +630,7 @@ export default function ScanScreen() {
         });
       }
 
+      notifySuccess();
       Alert.alert('Saved!', 'Receipt has been saved successfully.', [
         {
           text: 'View Dashboard',
@@ -835,333 +1168,3 @@ export default function ScanScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  centered: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  // Idle
-  idleContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.spacing.xl,
-    gap: theme.spacing.md,
-  },
-  iconRing: {
-    width: 112,
-    height: 112,
-    borderRadius: 56,
-    backgroundColor: theme.colors.primaryFaint,
-    borderWidth: 2,
-    borderColor: `${theme.colors.primary}44`,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: theme.spacing.sm,
-  },
-  idleTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xxl,
-    fontWeight: '800',
-  },
-  idleSubtitle: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.md,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: theme.spacing.md,
-    marginTop: theme.spacing.md,
-    width: '100%',
-  },
-  actionCard: {
-    flex: 1,
-    borderRadius: theme.radius.xl,
-    overflow: 'hidden',
-  },
-  actionGradient: {
-    padding: theme.spacing.lg,
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: theme.radius.xl,
-  },
-  actionLabel: {
-    color: '#fff',
-    fontSize: theme.font.lg,
-    fontWeight: '700',
-  },
-  actionSub: {
-    color: 'rgba(255,255,255,0.75)',
-    fontSize: theme.font.xs,
-  },
-  manualEntry: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: theme.radius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surfaceHigh,
-    marginTop: theme.spacing.xs,
-  },
-  manualEntryText: {
-    color: theme.colors.primary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-  },
-  hint: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    textAlign: 'center',
-    marginTop: theme.spacing.sm,
-  },
-  // Processing
-  processingImage: {
-    width: '100%',
-    height: 260,
-    opacity: 0.35,
-  },
-  processingOverlay: {
-    position: 'absolute',
-    alignItems: 'center',
-    gap: 12,
-  },
-  processingText: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xl,
-    fontWeight: '700',
-  },
-  processingSubText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-  },
-  // Review
-  reviewContent: {
-    padding: theme.spacing.md,
-    gap: theme.spacing.sm,
-    paddingBottom: 40,
-  },
-  receiptThumb: {
-    width: '100%',
-    height: 180,
-    borderRadius: theme.radius.lg,
-    marginBottom: theme.spacing.sm,
-  },
-  reviewHeader: {
-    marginBottom: theme.spacing.xs,
-  },
-  reviewTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xl,
-    fontWeight: '800',
-  },
-  reviewSub: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-  },
-  aiChipPending: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: theme.radius.full,
-    backgroundColor: theme.colors.primaryFaint,
-    marginTop: 8,
-  },
-  aiChipApplied: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: theme.radius.full,
-    backgroundColor: theme.colors.primaryFaint,
-    borderWidth: 1,
-    borderColor: theme.colors.primary,
-    marginTop: 8,
-  },
-  aiChipText: {
-    color: theme.colors.primary,
-    fontSize: theme.font.xs,
-    fontWeight: '700',
-  },
-  aiChipError: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: theme.radius.full,
-    backgroundColor: 'rgba(245, 158, 11, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.4)',
-    marginTop: 8,
-    maxWidth: '100%',
-  },
-  aiChipErrorText: {
-    color: theme.colors.warning,
-    fontSize: theme.font.xs,
-    fontWeight: '600',
-    flexShrink: 1,
-  },
-  aiRetryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: theme.radius.full,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    marginTop: 8,
-  },
-  itemCategoriesRow: {
-    marginTop: theme.spacing.sm,
-    paddingTop: theme.spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border,
-  },
-  itemCategoriesLabel: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    marginBottom: 6,
-  },
-  itemCategoriesChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  fieldCard: {
-    gap: theme.spacing.sm,
-  },
-  fieldLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.xs,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  input: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    backgroundColor: theme.colors.surfaceHigh,
-    borderRadius: theme.radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  inputMultiline: {
-    minHeight: 72,
-    paddingTop: 10,
-  },
-  categorySelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  categoryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: theme.spacing.xs,
-  },
-  categoryOption: {
-    borderRadius: theme.radius.full,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    padding: 2,
-  },
-  itemsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  itemsHint: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-  },
-  lineItemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  lineItemRowPressed: {
-    backgroundColor: theme.colors.surfaceHigh,
-  },
-  itemModalRoot: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  itemModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  itemModalTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.lg,
-    fontWeight: '700',
-  },
-  itemModalContent: {
-    padding: theme.spacing.md,
-    gap: theme.spacing.sm,
-  },
-  lineItemName: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    flex: 1,
-    marginRight: 4,
-  },
-  lineItemAmount: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-    minWidth: 56,
-    textAlign: 'right',
-  },
-  moreItemsBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    marginTop: 8,
-    paddingVertical: 8,
-  },
-  moreItemsText: {
-    color: theme.colors.primary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: theme.spacing.sm,
-    marginTop: theme.spacing.sm,
-  },
-  btnHalf: {
-    flex: 1,
-  },
-});

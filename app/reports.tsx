@@ -3,8 +3,8 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -18,9 +18,13 @@ import * as FileSystem from 'expo-file-system';
 // doesn't have the native side linked, so a top-level import could
 // crash the screen on open. Load it lazily inside the export handler
 // instead — only paid for when the user actually taps the share icon.
-import { theme } from '../constants/theme';
+import { useStyles, useTheme } from '../constants/theme';
 import { DatePickerModal } from '../components/ui/DatePickerModal';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
+import { EmptyState } from '../components/ui/EmptyState';
+import { Skeleton } from '../components/ui/Skeleton';
+import { HorizontalBar, VerticalBar } from '../components/ui/AnimatedBar';
+import { ModalHeader } from '../components/ui/ModalHeader';
 import {
   ALL_CATEGORIES,
   CATEGORY_ICONS,
@@ -78,6 +82,8 @@ export default function ReportsScreenWrapped() {
 }
 
 function ReportsScreen() {
+  const theme = useTheme();
+  const styles = useReportsStyles();
   const [preset, setPreset] = useState<PresetKey>('this');
   const initial = rangeForPreset('this');
   const [start, setStart] = useState<Date>(initial.start);
@@ -111,6 +117,17 @@ function ReportsScreen() {
       };
     }, []),
   );
+
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const all = await getAllReceipts();
+      setReceipts(all);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   // Anchor month for trend chart + category trends: use the END of
   // the selected range so the chart shows the most-recent context.
@@ -200,31 +217,39 @@ function ReportsScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn}>
-          <Ionicons name="chevron-back" size={24} color={theme.colors.textPrimary} />
-        </Pressable>
-        <Text style={styles.headerTitle}>Reports</Text>
-        <Pressable
-          onPress={exportCsv}
-          disabled={exporting || receipts.length === 0}
-          hitSlop={10}
-          style={[styles.iconBtn, (exporting || receipts.length === 0) && { opacity: 0.4 }]}
-        >
-          {exporting ? (
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-          ) : (
-            <Ionicons name="share-outline" size={22} color={theme.colors.textPrimary} />
-          )}
-        </Pressable>
-      </View>
+      <ModalHeader
+        title="Reports"
+        rightActions={[
+          {
+            icon: 'share-outline',
+            onPress: exportCsv,
+            disabled: receipts.length === 0,
+            loading: exporting,
+            accessibilityLabel: 'Export receipts as CSV',
+          },
+        ]}
+      />
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.colors.primary} />
+        <View style={styles.content}>
+          {/* Match the eventual layout: range chips strip + hero
+              card + trend chart placeholder + sections. */}
+          <Skeleton width={'100%' as `${number}%`} height={34} borderRadius={999} />
+          <Skeleton width={'100%' as `${number}%`} height={160} borderRadius={16} />
+          <Skeleton width={'100%' as `${number}%`} height={170} borderRadius={16} />
+          <Skeleton width={'100%' as `${number}%`} height={150} borderRadius={16} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.primary}
+            />
+          }
+        >
           {/* Range presets — tap a chip to scope everything below */}
           <View style={styles.presetRow}>
             {(
@@ -566,18 +591,11 @@ function ReportsScreen() {
 
           {/* Empty state */}
           {receipts.length === 0 && (
-            <View style={styles.emptyState}>
-              <Ionicons
-                name="bar-chart-outline"
-                size={48}
-                color={theme.colors.textMuted}
-              />
-              <Text style={styles.emptyTitle}>No data yet</Text>
-              <Text style={styles.emptyText}>
-                Scan a few receipts and your monthly summary, trends, and
-                top categories will appear here.
-              </Text>
-            </View>
+            <EmptyState
+              icon="bar-chart-outline"
+              title="No data yet"
+              description="Scan a few receipts and your monthly summary, trend chart, top categories, recurring expenses, and standouts will all appear here."
+            />
           )}
         </ScrollView>
       )}
@@ -586,6 +604,8 @@ function ReportsScreen() {
 }
 
 function SummaryCard({ delta }: { delta: PeriodDelta | null }) {
+  const theme = useTheme();
+  const styles = useReportsStyles();
   if (!delta) return null;
   const { current, delta: d, deltaPct } = delta;
   const isUp = d > 0;
@@ -633,6 +653,8 @@ function TrendChart({
   activeMonthKeys: string[];
   onBarPress: (bucket: MonthBucket) => void;
 }) {
+  const theme = useTheme();
+  const styles = useReportsStyles();
   const max = Math.max(1, ...data.map((b) => b.total));
   const activeSet = new Set(activeMonthKeys);
   return (
@@ -649,19 +671,11 @@ function TrendChart({
               pressed && { opacity: 0.7 },
             ]}
           >
-            <View style={styles.trendBarTrack}>
-              <View
-                style={[
-                  styles.trendBarFill,
-                  {
-                    height: `${heightPct}%` as `${number}%`,
-                    backgroundColor: isActive
-                      ? theme.colors.primary
-                      : theme.colors.primaryFaint,
-                  },
-                ]}
-              />
-            </View>
+            <VerticalBar
+              percent={heightPct}
+              color={isActive ? theme.colors.primary : theme.colors.primaryFaint}
+              trackHeight={90}
+            />
             <Text style={styles.trendBarLabel}>{b.shortLabel}</Text>
             <Text
               style={[
@@ -686,6 +700,7 @@ function Section({
   title: string;
   children: React.ReactNode;
 }) {
+  const styles = useReportsStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -701,6 +716,7 @@ function CategorySparkline({
   points: Array<{ shortLabel: string; total: number }>;
   color: string;
 }) {
+  const styles = useReportsStyles();
   const max = Math.max(1, ...points.map((p) => p.total));
   return (
     <View style={styles.sparkRow}>
@@ -708,17 +724,7 @@ function CategorySparkline({
         const h = max > 0 ? (p.total / max) * 100 : 0;
         return (
           <View key={`${p.shortLabel}-${idx}`} style={styles.sparkCol}>
-            <View style={styles.sparkBarTrack}>
-              <View
-                style={[
-                  styles.sparkBarFill,
-                  {
-                    height: `${h}%` as `${number}%`,
-                    backgroundColor: color,
-                  },
-                ]}
-              />
-            </View>
+            <VerticalBar percent={h} color={color} trackHeight={26} />
             <Text style={styles.sparkLabel}>{p.shortLabel}</Text>
           </View>
         );
@@ -727,7 +733,8 @@ function CategorySparkline({
   );
 }
 
-const styles = StyleSheet.create({
+function useReportsStyles() {
+  return useStyles((theme) => ({
   root: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -1041,4 +1048,5 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-});
+  }));
+}

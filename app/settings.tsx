@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { theme } from '../constants/theme';
+import { useStyles, useTheme } from '../constants/theme';
 import { useAuth } from '../lib/AuthContext';
 import { humanizeAuthError } from '../lib/authErrors';
 import { classifyWithAnthropic } from '../lib/anthropicClassify';
@@ -26,7 +26,203 @@ import {
 } from '../lib/secureStorage';
 import { parseReceiptWithGemini } from '../lib/geminiParseReceipt';
 
+function useSettingsStyles() {
+  return useStyles((theme) => ({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    scroll: {
+      paddingHorizontal: theme.spacing.lg,
+      paddingTop: theme.spacing.lg,
+      paddingBottom: theme.spacing.xl,
+    },
+    section: {
+      marginBottom: theme.spacing.lg,
+    },
+    sectionTitle: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.font.xs,
+      fontWeight: '700',
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      marginBottom: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.xs,
+    },
+    card: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      overflow: 'hidden',
+    },
+    row: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: 14,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.colors.border,
+    },
+    rowLabel: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.font.sm,
+    },
+    rowValue: {
+      color: theme.colors.textPrimary,
+      fontSize: theme.font.sm,
+      fontWeight: '600',
+      maxWidth: '60%',
+    },
+    linkRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: 14,
+    },
+    linkText: {
+      color: theme.colors.primary,
+      fontSize: theme.font.md,
+      fontWeight: '600',
+    },
+    profileHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.colors.border,
+    },
+    avatar: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    avatarPlaceholder: {
+      backgroundColor: theme.colors.background,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    profileName: {
+      color: theme.colors.textPrimary,
+      fontSize: theme.font.lg,
+      fontWeight: '700',
+    },
+    profileMeta: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.font.sm,
+      marginTop: 2,
+    },
+    dangerZone: {
+      marginTop: theme.spacing.md,
+    },
+    signOutBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: theme.colors.surface,
+      borderRadius: theme.radius.md,
+      paddingVertical: 14,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    signOutText: {
+      color: theme.colors.textPrimary,
+      fontSize: theme.font.md,
+      fontWeight: '600',
+    },
+    deleteBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: 'rgba(239, 68, 68, 0.08)',
+      borderRadius: theme.radius.md,
+      paddingVertical: 14,
+      marginTop: theme.spacing.md,
+      borderWidth: 1,
+      borderColor: 'rgba(239, 68, 68, 0.4)',
+    },
+    deleteText: {
+      color: theme.colors.error,
+      fontSize: theme.font.md,
+      fontWeight: '700',
+    },
+    deleteHelp: {
+      color: theme.colors.textMuted,
+      fontSize: theme.font.xs,
+      textAlign: 'center',
+      marginTop: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.md,
+      lineHeight: 16,
+    },
+    keyBlock: {
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
+    },
+    keyLabel: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.font.xs,
+      fontWeight: '600',
+      marginBottom: 6,
+    },
+    keyRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    keyInput: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+      color: theme.colors.textPrimary,
+      borderRadius: theme.radius.sm,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      fontSize: theme.font.sm,
+      fontFamily: 'monospace',
+    },
+    keyButtons: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.sm,
+    },
+    keyButton: {
+      flex: 1,
+      alignItems: 'center',
+      backgroundColor: theme.colors.primary,
+      borderRadius: theme.radius.sm,
+      paddingVertical: 10,
+    },
+    keyButtonGhost: {
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    keyButtonText: {
+      color: '#fff',
+      fontSize: theme.font.sm,
+      fontWeight: '700',
+    },
+    keyButtonGhostText: {
+      color: theme.colors.textPrimary,
+    },
+    keyHelp: {
+      color: theme.colors.textMuted,
+      fontSize: theme.font.xs,
+      lineHeight: 16,
+      marginTop: theme.spacing.sm,
+    },
+  }));
+}
+
 export default function SettingsScreen() {
+  const theme = useTheme();
+  const styles = useSettingsStyles();
   const { user, profile, provider, biometricEnabled, setBiometricEnabled, signOut, deleteAccount } =
     useAuth();
   const [working, setWorking] = useState(false);
@@ -298,7 +494,12 @@ export default function SettingsScreen() {
                 secureTextEntry={!geminiVisible}
                 style={styles.keyInput}
               />
-              <Pressable onPress={() => setGeminiVisible((v) => !v)} hitSlop={8}>
+              <Pressable
+                onPress={() => setGeminiVisible((v) => !v)}
+                hitSlop={14}
+                accessibilityRole="button"
+                accessibilityLabel={geminiVisible ? 'Hide key' : 'Show key'}
+              >
                 <Ionicons
                   name={geminiVisible ? 'eye-off-outline' : 'eye-outline'}
                   size={20}
@@ -358,7 +559,12 @@ export default function SettingsScreen() {
                 secureTextEntry={!keyVisible}
                 style={styles.keyInput}
               />
-              <Pressable onPress={() => setKeyVisible((v) => !v)} hitSlop={8}>
+              <Pressable
+                onPress={() => setKeyVisible((v) => !v)}
+                hitSlop={14}
+                accessibilityRole="button"
+                accessibilityLabel={keyVisible ? 'Hide key' : 'Show key'}
+              >
                 <Ionicons
                   name={keyVisible ? 'eye-off-outline' : 'eye-outline'}
                   size={20}
@@ -421,6 +627,7 @@ export default function SettingsScreen() {
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const styles = useSettingsStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -430,6 +637,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function Row({ label, value }: { label: string; value: string }) {
+  const styles = useSettingsStyles();
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -440,194 +648,3 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
-  scroll: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
-  },
-  section: {
-    marginBottom: theme.spacing.lg,
-  },
-  sectionTitle: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.xs,
-    fontWeight: '700',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginBottom: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.xs,
-  },
-  card: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    overflow: 'hidden',
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.border,
-  },
-  rowLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-  },
-  rowValue: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-    maxWidth: '60%',
-  },
-  linkRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: 14,
-  },
-  linkText: {
-    color: theme.colors.primary,
-    fontSize: theme.font.md,
-    fontWeight: '600',
-  },
-  profileHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.border,
-  },
-  avatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  avatarPlaceholder: {
-    backgroundColor: theme.colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  profileName: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.lg,
-    fontWeight: '700',
-  },
-  profileMeta: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    marginTop: 2,
-  },
-  dangerZone: {
-    marginTop: theme.spacing.md,
-  },
-  signOutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.md,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  signOutText: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    fontWeight: '600',
-  },
-  deleteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-    borderRadius: theme.radius.md,
-    paddingVertical: 14,
-    marginTop: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.4)',
-  },
-  deleteText: {
-    color: theme.colors.error,
-    fontSize: theme.font.md,
-    fontWeight: '700',
-  },
-  deleteHelp: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    textAlign: 'center',
-    marginTop: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.md,
-    lineHeight: 16,
-  },
-  keyBlock: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.md,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border,
-  },
-  keyLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.xs,
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  keyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  keyInput: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-    color: theme.colors.textPrimary,
-    borderRadius: theme.radius.sm,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    fontSize: theme.font.sm,
-    fontFamily: 'monospace',
-  },
-  keyButtons: {
-    flexDirection: 'row',
-    gap: theme.spacing.sm,
-    marginTop: theme.spacing.sm,
-  },
-  keyButton: {
-    flex: 1,
-    alignItems: 'center',
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.sm,
-    paddingVertical: 10,
-  },
-  keyButtonGhost: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  keyButtonText: {
-    color: '#fff',
-    fontSize: theme.font.sm,
-    fontWeight: '700',
-  },
-  keyButtonGhostText: {
-    color: theme.colors.textPrimary,
-  },
-  keyHelp: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    lineHeight: 16,
-    marginTop: theme.spacing.sm,
-  },
-});

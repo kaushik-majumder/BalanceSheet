@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,11 +13,14 @@ import { format } from 'date-fns';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Category } from '../types';
-import { theme } from '../constants/theme';
+import { useStyles, useTheme } from '../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../constants/categories';
 import { getAllReceipts, getReceiptsByMonth } from '../lib/database';
 import { format as formatDate } from 'date-fns';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ReceiptListSkeleton, Skeleton } from '../components/ui/Skeleton';
+import { ModalHeader } from '../components/ui/ModalHeader';
 import {
   buildCategoryDrilldown,
   CategoryDrilldownResult,
@@ -31,6 +35,150 @@ export default function CategoryDetailScreenWrapped() {
 }
 
 function CategoryDetailScreen() {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    root: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: t.spacing.md,
+      paddingVertical: t.spacing.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: t.colors.border,
+    },
+    backBtn: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    headerInfo: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    titleEmoji: {
+      fontSize: 18,
+    },
+    title: {
+      fontSize: t.font.lg,
+      fontWeight: '700',
+    },
+    content: {
+      padding: t.spacing.md,
+      gap: t.spacing.md,
+      paddingBottom: t.spacing.xl,
+    },
+    heroCard: {
+      backgroundColor: t.colors.surface,
+      borderRadius: t.radius.lg,
+      padding: t.spacing.lg,
+      alignItems: 'center',
+      gap: 4,
+      borderWidth: 1,
+    },
+    heroLabel: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+    },
+    heroAmount: {
+      fontSize: 36,
+      fontWeight: '800',
+      letterSpacing: -1,
+    },
+    heroSub: {
+      color: t.colors.textMuted,
+      fontSize: t.font.sm,
+    },
+    groupCard: {
+      backgroundColor: t.colors.surface,
+      borderRadius: t.radius.lg,
+      padding: t.spacing.md,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      gap: t.spacing.sm,
+    },
+    groupHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    storeName: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.md,
+      fontWeight: '700',
+    },
+    date: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+      marginTop: 2,
+    },
+    groupTotal: {
+      fontSize: t.font.lg,
+      fontWeight: '800',
+    },
+    itemsList: {
+      paddingTop: t.spacing.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.colors.border,
+      gap: 6,
+    },
+    itemRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    itemName: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      flex: 1,
+      marginRight: 8,
+    },
+    itemAmount: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+    },
+    wholeReceiptHint: {
+      color: t.colors.textMuted,
+      fontSize: t.font.xs,
+      fontStyle: 'italic',
+      paddingTop: 4,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.colors.border,
+    },
+    center: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    empty: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: t.spacing.xl,
+      gap: t.spacing.sm,
+    },
+    emptyTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.xl,
+      fontWeight: '700',
+      marginTop: t.spacing.sm,
+    },
+    emptyText: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      textAlign: 'center',
+      maxWidth: 260,
+    },
+  }));
   const params = useLocalSearchParams<{
     category?: string;
     year?: string;
@@ -56,23 +204,36 @@ function CategoryDetailScreen() {
 
   const [result, setResult] = useState<CategoryDrilldownResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const reload = useCallback(async () => {
+    const receipts = scoped
+      ? await getReceiptsByMonth(yearNum!, monthNum!)
+      : await getAllReceipts();
+    setResult(buildCategoryDrilldown(receipts, category));
+  }, [category, yearNum, monthNum, scoped]);
 
   useFocusEffect(
     useCallback(() => {
       let mounted = true;
       (async () => {
-        const receipts = scoped
-          ? await getReceiptsByMonth(yearNum!, monthNum!)
-          : await getAllReceipts();
-        if (!mounted) return;
-        setResult(buildCategoryDrilldown(receipts, category));
-        setLoading(false);
+        await reload();
+        if (mounted) setLoading(false);
       })();
       return () => {
         mounted = false;
       };
-    }, [category, yearNum, monthNum, scoped]),
+    }, [reload]),
   );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await reload();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [reload]);
 
   const accent = standard
     ? theme.colors.category[category as Category]
@@ -81,35 +242,39 @@ function CategoryDetailScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={24} color={theme.colors.textPrimary} />
-        </Pressable>
-        <View style={styles.headerInfo}>
-          <Text style={styles.titleEmoji}>{headerIcon}</Text>
-          <Text style={[styles.title, { color: accent }]}>{category}</Text>
-        </View>
-        <View style={{ width: 32 }} />
-      </View>
+      <ModalHeader
+        title={category}
+        iconLeading={headerIcon}
+        titleColor={accent}
+      />
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.colors.primary} />
+        <View style={styles.content}>
+          <Skeleton width={'100%' as `${number}%`} height={92} borderRadius={16} />
+          <ReceiptListSkeleton count={3} />
         </View>
       ) : !result || result.groups.length === 0 ? (
-        <View style={styles.empty}>
-          <Ionicons
-            name="receipt-outline"
-            size={52}
-            color={theme.colors.textMuted}
-          />
-          <Text style={styles.emptyTitle}>Nothing in {category} yet</Text>
-          <Text style={styles.emptyText}>
-            Items you scan that fall under {category} will show here.
-          </Text>
-        </View>
+        <EmptyState
+          icon="receipt-outline"
+          title={`Nothing in ${category} yet`}
+          description={
+            monthLabel
+              ? `No receipts in ${monthLabel} have items tagged ${category}. Try a different month, or tag items in this category to see them here.`
+              : `Items you scan that fall under ${category} will show up here. You can also tag existing items by opening a receipt.`
+          }
+          tint={accent}
+        />
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.primary}
+            />
+          }
+        >
           <View style={[styles.heroCard, { borderColor: accent }]}>
             <Text style={styles.heroLabel}>
               {monthLabel
@@ -186,146 +351,3 @@ function isCategory(value: unknown): value is Category {
   );
 }
 
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.border,
-  },
-  backBtn: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  titleEmoji: {
-    fontSize: 18,
-  },
-  title: {
-    fontSize: theme.font.lg,
-    fontWeight: '700',
-  },
-  content: {
-    padding: theme.spacing.md,
-    gap: theme.spacing.md,
-    paddingBottom: theme.spacing.xl,
-  },
-  heroCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.lg,
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-  },
-  heroLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  heroAmount: {
-    fontSize: 36,
-    fontWeight: '800',
-    letterSpacing: -1,
-  },
-  heroSub: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.sm,
-  },
-  groupCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    gap: theme.spacing.sm,
-  },
-  groupHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  storeName: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.md,
-    fontWeight: '700',
-  },
-  date: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    marginTop: 2,
-  },
-  groupTotal: {
-    fontSize: theme.font.lg,
-    fontWeight: '800',
-  },
-  itemsList: {
-    paddingTop: theme.spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border,
-    gap: 6,
-  },
-  itemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  itemName: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    flex: 1,
-    marginRight: 8,
-  },
-  itemAmount: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-  },
-  wholeReceiptHint: {
-    color: theme.colors.textMuted,
-    fontSize: theme.font.xs,
-    fontStyle: 'italic',
-    paddingTop: 4,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border,
-  },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  empty: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.spacing.xl,
-    gap: theme.spacing.sm,
-  },
-  emptyTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xl,
-    fontWeight: '700',
-    marginTop: theme.spacing.sm,
-  },
-  emptyText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    textAlign: 'center',
-    maxWidth: 260,
-  },
-});

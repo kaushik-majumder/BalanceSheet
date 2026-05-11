@@ -1,0 +1,136 @@
+name: Android build
+
+# Build a signed preview APK without burning EAS Free-plan quota.
+# Runs `eas build --local`, which uses Expo's keystore + env vars from
+# the cloud but executes Gradle on GitHub's runner — same APK as cloud
+# EAS, just on free CI minutes.
+#
+# Triggers:
+#   - workflow_dispatch  → run by hand from the Actions tab (pick profile)
+#   - push to feature/** → auto-build on every commit to a feature branch
+#
+# Where to watch it: GitHub → Actions tab → "Android build" run.
+# Download the APK from the run's "Artifacts" section at the bottom.
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'EAS build profile (preview | production | development)'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - preview
+          - production
+          - development
+  push:
+    branches:
+      - 'feature/**'
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+jobs:
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install EAS CLI
+        run: npm install -g eas-cli@latest
+
+      - name: Stage google-services.json for EAS local build
+        env:
+          GOOGLE_SERVICES_JSON_CONTENT: ${{ secrets.GOOGLE_SERVICES_JSON_CONTENT }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON_CONTENT" ]; then
+            echo "::error::Missing repo secret GOOGLE_SERVICES_JSON_CONTENT — paste the contents of google-services.json into Settings → Secrets → Actions."
+            exit 1
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON_CONTENT" > google-services.json
+          node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8'))"
+
+          # eas-cli archives the project for `--local` builds using
+          # .easignore if present, otherwise .gitignore. Our .gitignore
+          # excludes google-services.json (it carries Firebase keys), so
+          # write a runner-only .easignore that mirrors .gitignore minus
+          # that one line — keeping the file out of git but pulling it
+          # into the build archive.
+          grep -v '^google-services\.json$' .gitignore > .easignore
+          echo "google-services.json staged ($(wc -c < google-services.json) bytes)"
+          echo "--- .easignore (relevant excerpt) ---"
+          grep -E '(google-services|GoogleService)' .easignore || echo "(no Firebase lines — good, they'll be included)"
+
+      - name: Determine profile
+        id: profile
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.profile }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=preview" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: EAS local build (Android APK)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # Use the working directory as-is instead of packaging only
+          # git-tracked files — google-services.json is gitignored but
+          # materialised at runtime from a secret in the step above.
+          EAS_NO_VCS: '1'
+        run: |
+          echo "--- working directory before build ---"
+          ls -la google-services.json
+          eas build \
+            --profile ${{ steps.profile.outputs.name }} \
+            --platform android \
+            --local \
+            --non-interactive \
+            --output ./build-output.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: receipt-scanner-${{ steps.profile.outputs.name }}-${{ github.sha }}
+          path: build-output.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build summary
+        if: always()
+        run: |
+          {
+            echo "## Android build"
+            echo ""
+            echo "- Profile: \`${{ steps.profile.outputs.name }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Status: \`${{ job.status }}\`"
+            if [ -f build-output.apk ]; then
+              SIZE=$(du -h build-output.apk | cut -f1)
+              echo "- APK size: $SIZE"
+              echo ""
+              echo "Download the APK from the **Artifacts** section above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

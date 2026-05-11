@@ -3,7 +3,6 @@ import {
   View,
   Text,
   ScrollView,
-  StyleSheet,
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
@@ -13,15 +12,112 @@ import { Ionicons } from '@expo/vector-icons';
 import { format, addMonths, subMonths } from 'date-fns';
 import { getReceiptsByMonth, deleteReceipt } from '../../lib/database';
 import { Receipt, MonthlyStats } from '../../types';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 import { SpendingChart } from '../../components/dashboard/SpendingChart';
 import { StatsRow } from '../../components/dashboard/StatsRow';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
 import { Card } from '../../components/ui/Card';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { MonthYearPicker } from '../../components/ui/MonthYearPicker';
+import { useToast } from '../../components/ui/Toast';
+import { tapMedium } from '../../lib/haptics';
 import { computeStats } from '../../lib/dashboardStats';
 
 export default function DashboardScreen() {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    screen: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    content: {
+      padding: t.spacing.md,
+      gap: t.spacing.md,
+      paddingBottom: 32,
+    },
+    heroCard: {
+      borderRadius: t.radius.xl,
+      padding: t.spacing.xl,
+      alignItems: 'center',
+      gap: 4,
+    },
+    heroLabel: {
+      color: 'rgba(255,255,255,0.8)',
+      fontSize: t.font.sm,
+      fontWeight: '600',
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+    },
+    heroAmount: {
+      color: '#fff',
+      fontSize: 48,
+      fontWeight: '800',
+      letterSpacing: -1,
+    },
+    monthRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.spacing.md,
+      marginTop: t.spacing.sm,
+    },
+    monthLabel: {
+      color: 'rgba(255,255,255,0.9)',
+      fontSize: t.font.md,
+      fontWeight: '600',
+      minWidth: 140,
+      textAlign: 'center',
+    },
+    section: {
+      gap: t.spacing.md,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    sectionTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.lg,
+      fontWeight: '700',
+    },
+    reportsLink: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+      borderRadius: t.radius.full,
+      backgroundColor: `${t.colors.primary}1A`,
+    },
+    reportsLinkText: {
+      color: t.colors.primary,
+      fontSize: t.font.xs,
+      fontWeight: '700',
+    },
+    list: {
+      gap: t.spacing.sm,
+    },
+    emptyCard: {
+      alignItems: 'center',
+      gap: t.spacing.sm,
+      paddingVertical: t.spacing.xxl,
+    },
+    emptyTitle: {
+      color: t.colors.textPrimary,
+      fontSize: t.font.xl,
+      fontWeight: '700',
+      marginTop: t.spacing.sm,
+    },
+    emptyText: {
+      color: t.colors.textSecondary,
+      fontSize: t.font.sm,
+      textAlign: 'center',
+      maxWidth: 240,
+    },
+  }));
   const [activeMonth, setActiveMonth] = useState(new Date());
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const toast = useToast();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [stats, setStats] = useState<MonthlyStats>({
     totalSpent: 0,
@@ -53,9 +149,26 @@ export default function DashboardScreen() {
     setRefreshing(false);
   };
 
-  const handleDelete = async (id: string) => {
-    await deleteReceipt(id);
-    await load();
+  const handleDelete = (id: string) => {
+    const target = receipts.find((r) => r.id === id);
+    if (!target) return;
+    tapMedium();
+    // Optimistically remove from the list; defer DB delete 5s so the
+    // user can tap Undo on the toast first.
+    setReceipts((prev) => prev.filter((r) => r.id !== id));
+    const timer = setTimeout(() => {
+      deleteReceipt(id).then(load).catch(() => load());
+    }, 5000);
+    toast.show({
+      message: `Deleted ${target.storeName}`,
+      kind: 'success',
+      undoLabel: 'Undo',
+      onUndo: () => {
+        clearTimeout(timer);
+        load();
+      },
+      durationMs: 5000,
+    });
   };
 
   const recentReceipts = receipts.slice(0, 5);
@@ -91,7 +204,17 @@ export default function DashboardScreen() {
           >
             <Ionicons name="chevron-back" size={20} color="rgba(255,255,255,0.8)" />
           </TouchableOpacity>
-          <Text style={styles.monthLabel}>{format(activeMonth, 'MMMM yyyy')}</Text>
+          <TouchableOpacity
+            onPress={() => {
+              tapMedium();
+              setPickerOpen(true);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`${format(activeMonth, 'MMMM yyyy')}, tap to pick another month`}
+          >
+            <Text style={styles.monthLabel}>{format(activeMonth, 'MMMM yyyy')}</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setActiveMonth((m) => addMonths(m, 1))}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
@@ -149,105 +272,22 @@ export default function DashboardScreen() {
       )}
 
       {receipts.length === 0 && (
-        <Card style={styles.emptyCard}>
-          <Ionicons name="receipt-outline" size={48} color={theme.colors.textMuted} />
-          <Text style={styles.emptyTitle}>No receipts yet</Text>
-          <Text style={styles.emptyText}>
-            Tap the camera button to scan your first receipt
-          </Text>
-        </Card>
+        <EmptyState
+          icon="receipt-outline"
+          title="No receipts yet"
+          description="Tap the green camera button below to scan your first receipt and start tracking your spending."
+          actionLabel="Scan a receipt"
+          onAction={() => router.push('/(tabs)/scan')}
+        />
       )}
+
+      <MonthYearPicker
+        visible={pickerOpen}
+        selected={activeMonth}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(d) => setActiveMonth(d)}
+      />
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  content: {
-    padding: theme.spacing.md,
-    gap: theme.spacing.md,
-    paddingBottom: 32,
-  },
-  heroCard: {
-    borderRadius: theme.radius.xl,
-    padding: theme.spacing.xl,
-    alignItems: 'center',
-    gap: 4,
-  },
-  heroLabel: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: theme.font.sm,
-    fontWeight: '600',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroAmount: {
-    color: '#fff',
-    fontSize: 48,
-    fontWeight: '800',
-    letterSpacing: -1,
-  },
-  monthRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.spacing.md,
-    marginTop: theme.spacing.sm,
-  },
-  monthLabel: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: theme.font.md,
-    fontWeight: '600',
-    minWidth: 140,
-    textAlign: 'center',
-  },
-  section: {
-    gap: theme.spacing.md,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  sectionTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.lg,
-    fontWeight: '700',
-  },
-  reportsLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: theme.radius.full,
-    backgroundColor: `${theme.colors.primary}1A`,
-  },
-  reportsLinkText: {
-    color: theme.colors.primary,
-    fontSize: theme.font.xs,
-    fontWeight: '700',
-  },
-  list: {
-    gap: theme.spacing.sm,
-  },
-  emptyCard: {
-    alignItems: 'center',
-    gap: theme.spacing.sm,
-    paddingVertical: theme.spacing.xxl,
-  },
-  emptyTitle: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.font.xl,
-    fontWeight: '700',
-    marginTop: theme.spacing.sm,
-  },
-  emptyText: {
-    color: theme.colors.textSecondary,
-    fontSize: theme.font.sm,
-    textAlign: 'center',
-    maxWidth: 240,
-  },
-});

@@ -1,9 +1,9 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Pressable, Text, View, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Category } from '../../types';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
-import { theme } from '../../constants/theme';
+import { useStyles, useTheme } from '../../constants/theme';
 
 /**
  * A chip that renders any string tag — standard category or custom.
@@ -26,6 +26,29 @@ export function TagChip({
   size?: 'sm' | 'md';
   style?: ViewStyle;
 }) {
+  const theme = useTheme();
+  const styles = useStyles((t) => ({
+    chip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderRadius: t.radius.full,
+      borderWidth: 1,
+    },
+    sm: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    md: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    emoji: {
+      marginRight: 4,
+    },
+    label: {
+      fontWeight: '700',
+    },
+  }));
   const standard = isStandardCategory(tag);
   const accent = standard
     ? theme.colors.category[tag as Category]
@@ -81,26 +104,3 @@ export function TagChip({
 function isStandardCategory(tag: string): boolean {
   return (ALL_CATEGORIES as readonly string[]).includes(tag);
 }
-
-const styles = StyleSheet.create({
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: theme.radius.full,
-    borderWidth: 1,
-  },
-  sm: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  md: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  emoji: {
-    marginRight: 4,
-  },
-  label: {
-    fontWeight: '700',
-  },
-});
