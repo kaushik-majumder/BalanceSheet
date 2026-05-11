@@ -40,6 +40,7 @@ const STICKY_VOLUNTARY = new Set([
   'edit',
   'profile-setup',
   'category-detail',
+  'reports',
 ]);
 
 function RootStack() {
@@ -71,11 +72,20 @@ function RootStack() {
       biometricUnlocked,
     });
     if (target === current) return;
-    // User is on a voluntary screen (modal / edit) and the gate state says
-    // they're cleared for the app — leave them on it. Do still redirect if
-    // target is anything other than (tabs) (e.g. they signed out and
-    // need to land on /auth).
-    if (target === '(tabs)' && STICKY_VOLUNTARY.has(current)) return;
+    // User is on a voluntary screen (modal / edit) and the gate state
+    // says they're cleared for the app — leave them on it. We also
+    // bail when `current` is empty: useSegments() can return [] for
+    // top-level modal routes in some expo-router versions, and we
+    // don't want the guard to force a redirect off an unknown route
+    // just because we couldn't identify it. Real redirects (sign out,
+    // verify-email, etc.) flow through targets OTHER than '(tabs)',
+    // so this only relaxes the "drag back to tabs" behavior.
+    if (
+      target === '(tabs)' &&
+      (current === '' || STICKY_VOLUNTARY.has(current))
+    ) {
+      return;
+    }
     router.replace(targetToHref(target) as never);
   }, [
     initializing,
@@ -126,12 +136,22 @@ function RootStack() {
         name="edit/[id]"
         options={{
           title: 'Edit Receipt',
-          presentation: 'modal',
+          // Regular stack screen (NOT modal). expo-router can't reliably
+          // navigate from a modal (category-detail, reports) into another
+          // modal — the new screen renders behind the active one. With
+          // edit as a plain stack screen, push() works from anywhere.
           headerStyle: { backgroundColor: theme.colors.surface },
         }}
       />
       <Stack.Screen
         name="category-detail"
+        options={{
+          presentation: 'modal',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="reports"
         options={{
           presentation: 'modal',
           headerShown: false,

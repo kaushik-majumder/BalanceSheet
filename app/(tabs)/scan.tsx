@@ -29,6 +29,7 @@ import {
   setGeminiCachedResponse,
 } from '../../lib/database';
 import { parseReceiptText, parseYmdLocal } from '../../lib/parser';
+import { persistReceiptImage } from '../../lib/receiptPhoto';
 import {
   parseReceiptWithGemini,
   parseGeminiPayload,
@@ -244,8 +245,18 @@ export default function ScanScreen() {
         'Other';
       const finalTags = categoryTags.length ? categoryTags : [primaryCategory];
 
+      // Copy the captured image from cache into persistent storage
+      // BEFORE saving — otherwise Android will prune the cache and
+      // the receipt's saved imageUri ends up pointing at a missing
+      // file, which renders as blank in the edit screen later.
+      const receiptId = uuidv4();
+      const persistentImageUri = await persistReceiptImage(
+        imageUri,
+        receiptId,
+      );
+
       await saveReceipt({
-        id: uuidv4(),
+        id: receiptId,
         storeName: storeName.trim(),
         date: parsedDate.toISOString(),
         totalAmount: amountVal,
@@ -254,7 +265,7 @@ export default function ScanScreen() {
         category: primaryCategory,
         categoryTags: finalTags,
         rawText: parsed?.rawText,
-        imageUri: imageUri ?? undefined,
+        imageUri: persistentImageUri,
         notes: notes.trim() || undefined,
         lineItems: items,
         createdAt: now,

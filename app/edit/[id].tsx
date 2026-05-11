@@ -14,6 +14,7 @@ import {
   Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as FileSystem from 'expo-file-system';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -31,6 +32,7 @@ import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
 import { TagChip } from '../../components/ui/TagChip';
+import { ErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { ItemEditModal } from '../../components/receipt/ItemEditModal';
 
 type CategoryGroup = {
@@ -38,6 +40,30 @@ type CategoryGroup = {
   items: LineItem[];
   subtotal: number;
 };
+
+/** Safe wrapper around date-fns format(). Legacy receipts may have
+ *  missing/invalid createdAt/updatedAt fields; format() throws
+ *  "Invalid time value" on a NaN Date, which crashes the screen
+ *  render (background-only blue screen visible to the user). Return
+ *  empty string for invalid input so the caller can render nothing
+ *  instead of crashing. */
+function safeFormat(input: unknown, fmt: string): string {
+  if (input == null || input === '') return '';
+  try {
+    const d = new Date(input as string);
+    if (isNaN(d.getTime())) return '';
+    return format(d, fmt);
+  } catch {
+    return '';
+  }
+}
+
+/** Defensive toFixed — null/undefined/NaN amounts on legacy receipts
+ *  would crash the whole render via `undefined.toFixed`. */
+function safeAmount(n: number | null | undefined, digits = 2): string {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '0.00';
+  return n.toFixed(digits);
+}
 
 function groupItemsByCategory(
   items: LineItem[],
@@ -61,7 +87,15 @@ function groupItemsByCategory(
     .sort((a, b) => b.subtotal - a.subtotal);
 }
 
-export default function EditReceiptScreen() {
+export default function EditReceiptScreenWrapped() {
+  return (
+    <ErrorBoundary>
+      <EditReceiptScreen />
+    </ErrorBoundary>
+  );
+}
+
+function EditReceiptScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 
@@ -83,6 +117,20 @@ export default function EditReceiptScreen() {
   // selected, taps toggle selection and a bottom action bar appears.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkCategoryPicker, setShowBulkCategoryPicker] = useState(false);
+  // True once the <Image> reports it couldn't load — likely a stale
+  // cache URI from a receipt scanned before persistReceiptImage was
+  // introduced. We hide the broken image area instead of rendering
+  // an empty blank space.
+  const [imageMissing, setImageMissing] = useState(false);
+  // Track the custom-tag input shown inside the bulk picker so users
+  // can add a brand new tag (e.g. "Garden Supplies") without leaving
+  // the sheet. Submitting applies the tag immediately AND adds it to
+  // the receipt-level categoryTags list via applyBulkCategory.
+  // CRITICAL: this useState MUST live with the other hooks at the top
+  // of the component, NOT after the early returns below. React will
+  // throw "Rendered more hooks than during the previous render" if
+  // any hook is conditionally called.
+  const [bulkCustomTag, setBulkCustomTag] = useState('');
   const selectionMode = selectedIds.size > 0;
 
   useEffect(() => {
@@ -96,13 +144,30 @@ export default function EditReceiptScreen() {
       }
       setReceipt(r);
       setStoreName(r.storeName);
-      setDate(format(new Date(r.date), 'yyyy-MM-dd'));
-      setAmount(r.totalAmount.toFixed(2));
+      setDate(safeFormat(r.date, 'yyyy-MM-dd'));
+      setAmount(safeAmount(r.totalAmount));
       setCategory(r.category);
       setCategoryTags(r.categoryTags ?? [r.category]);
       setNotes(r.notes ?? '');
       setItems(r.lineItems ?? []);
       setLoading(false);
+
+      // Verify the receipt's image actually exists on disk. Older
+      // scans saved a temp-cache URI that Android may have since
+      // pruned — if the file is gone, hide the image area entirely
+      // instead of reserving space for it (which renders as a
+      // navy rectangle on top of the screen).
+      if (r.imageUri) {
+        try {
+          const info = await FileSystem.getInfoAsync(r.imageUri);
+          if (mounted && !info.exists) setImageMissing(true);
+        } catch {
+          if (mounted) setImageMissing(true);
+        }
+      } else {
+        // No URI saved at all — same effect, just skip the network check.
+        setImageMissing(true);
+      }
 
       // Background refinement — run the async classifier on items still
       // marked 'Other'. Updates land in the DB; refresh local state on
@@ -222,11 +287,6 @@ export default function EditReceiptScreen() {
     });
   };
 
-  // Track the custom-tag input shown inside the bulk picker so users
-  // can add a brand new tag (e.g. "Garden Supplies") without leaving
-  // the sheet. Submitting applies the tag immediately AND adds it to
-  // the receipt-level categoryTags list via applyBulkCategory.
-  const [bulkCustomTag, setBulkCustomTag] = useState('');
   const submitBulkCustomTag = () => {
     const trimmed = bulkCustomTag.trim().slice(0, 32);
     if (!trimmed) return;
@@ -244,25 +304,34 @@ export default function EditReceiptScreen() {
       ]}
       keyboardShouldPersistTaps="handled"
     >
-      {/* Receipt image */}
-      {receipt.imageUri && (
+      {/* Receipt image — hides itself if the file is missing (older
+          receipts may have stale cache:// paths from before we
+          started copying to documentDirectory on save). */}
+      {receipt.imageUri && !imageMissing && (
         <Image
           source={{ uri: receipt.imageUri }}
           style={styles.image}
           resizeMode="cover"
+          onError={() => setImageMissing(true)}
         />
       )}
 
-      {/* Meta info */}
+      {/* Meta info — guard against missing/invalid timestamps on
+          legacy receipts so a bad createdAt doesn't crash the
+          whole screen render. */}
       <View style={styles.meta}>
-        <Text style={styles.metaText}>
-          Added {format(new Date(receipt.createdAt), 'MMM d, yyyy · h:mm a')}
-        </Text>
-        {receipt.updatedAt !== receipt.createdAt && (
+        {safeFormat(receipt.createdAt, 'MMM d, yyyy · h:mm a') !== '' && (
           <Text style={styles.metaText}>
-            Edited {format(new Date(receipt.updatedAt), 'MMM d, yyyy')}
+            Added {safeFormat(receipt.createdAt, 'MMM d, yyyy · h:mm a')}
           </Text>
         )}
+        {receipt.updatedAt &&
+          receipt.updatedAt !== receipt.createdAt &&
+          safeFormat(receipt.updatedAt, 'MMM d, yyyy') !== '' && (
+            <Text style={styles.metaText}>
+              Edited {safeFormat(receipt.updatedAt, 'MMM d, yyyy')}
+            </Text>
+          )}
       </View>
 
       {/* Store name */}
@@ -363,7 +432,7 @@ export default function EditReceiptScreen() {
               <View style={styles.categoryGroupHeader}>
                 <TagChip tag={group.category} size="sm" />
                 <Text style={styles.categoryGroupTotal}>
-                  ${group.subtotal.toFixed(2)}
+                  ${safeAmount(group.subtotal)}
                 </Text>
               </View>
               {group.items.map((item) => {
@@ -408,7 +477,7 @@ export default function EditReceiptScreen() {
                       {item.name}
                     </Text>
                     <Text style={styles.lineItemAmount}>
-                      ${item.amount.toFixed(2)}
+                      ${safeAmount(item.amount)}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -421,7 +490,7 @@ export default function EditReceiptScreen() {
               <View style={styles.totalsRow}>
                 <Text style={styles.totalsLabel}>Subtotal</Text>
                 <Text style={styles.totalsValue}>
-                  ${receipt.subtotalAmount.toFixed(2)}
+                  ${safeAmount(receipt.subtotalAmount)}
                 </Text>
               </View>
             )}
@@ -429,14 +498,14 @@ export default function EditReceiptScreen() {
               <View style={styles.totalsRow}>
                 <Text style={styles.totalsLabel}>Tax</Text>
                 <Text style={styles.totalsValue}>
-                  ${receipt.taxAmount.toFixed(2)}
+                  ${safeAmount(receipt.taxAmount)}
                 </Text>
               </View>
             )}
             <View style={[styles.totalsRow, styles.totalsRowGrand]}>
               <Text style={styles.totalsLabelGrand}>Total</Text>
               <Text style={styles.totalsValueGrand}>
-                ${receipt.totalAmount.toFixed(2)}
+                ${safeAmount(receipt.totalAmount)}
               </Text>
             </View>
           </View>
