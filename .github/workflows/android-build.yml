@@ -62,7 +62,7 @@ jobs:
       - name: Install EAS CLI
         run: npm install -g eas-cli@latest
 
-      - name: Stage google-services.json into the runner's git index
+      - name: Stage google-services.json for EAS local build
         env:
           GOOGLE_SERVICES_JSON_CONTENT: ${{ secrets.GOOGLE_SERVICES_JSON_CONTENT }}
         run: |
@@ -71,16 +71,18 @@ jobs:
             exit 1
           fi
           printf '%s' "$GOOGLE_SERVICES_JSON_CONTENT" > google-services.json
-          # Sanity check it's valid JSON before handing to Gradle
           node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8'))"
-          # `eas build --local` tars only git-tracked files, so write the
-          # secret-materialised file into the runner's local commit. Force
-          # past .gitignore and never push.
-          git config user.email "ci@github.local"
-          git config user.name "GitHub Actions"
-          git add -f google-services.json
-          git -c commit.gpgsign=false commit -m "ci: inline google-services.json (runner-only, do not push)"
+
+          # eas-cli archives the project for `--local` builds using
+          # .easignore if present, otherwise .gitignore. Our .gitignore
+          # excludes google-services.json (it carries Firebase keys), so
+          # write a runner-only .easignore that mirrors .gitignore minus
+          # that one line — keeping the file out of git but pulling it
+          # into the build archive.
+          grep -v '^google-services\.json$' .gitignore > .easignore
           echo "google-services.json staged ($(wc -c < google-services.json) bytes)"
+          echo "--- .easignore (relevant excerpt) ---"
+          grep -E '(google-services|GoogleService)' .easignore || echo "(no Firebase lines — good, they'll be included)"
 
       - name: Determine profile
         id: profile
