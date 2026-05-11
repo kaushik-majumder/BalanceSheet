@@ -18,6 +18,7 @@ import { StatsRow } from '../../components/dashboard/StatsRow';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
 import { Card } from '../../components/ui/Card';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { MonthYearPicker } from '../../components/ui/MonthYearPicker';
 import { useToast } from '../../components/ui/Toast';
 import { tapMedium } from '../../lib/haptics';
 import { computeStats } from '../../lib/dashboardStats';
@@ -115,6 +116,7 @@ export default function DashboardScreen() {
     },
   }));
   const [activeMonth, setActiveMonth] = useState(new Date());
+  const [pickerOpen, setPickerOpen] = useState(false);
   const toast = useToast();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [stats, setStats] = useState<MonthlyStats>({
@@ -202,7 +204,17 @@ export default function DashboardScreen() {
           >
             <Ionicons name="chevron-back" size={20} color="rgba(255,255,255,0.8)" />
           </TouchableOpacity>
-          <Text style={styles.monthLabel}>{format(activeMonth, 'MMMM yyyy')}</Text>
+          <TouchableOpacity
+            onPress={() => {
+              tapMedium();
+              setPickerOpen(true);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`${format(activeMonth, 'MMMM yyyy')}, tap to pick another month`}
+          >
+            <Text style={styles.monthLabel}>{format(activeMonth, 'MMMM yyyy')}</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setActiveMonth((m) => addMonths(m, 1))}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
@@ -268,6 +280,13 @@ export default function DashboardScreen() {
           onAction={() => router.push('/(tabs)/scan')}
         />
       )}
+
+      <MonthYearPicker
+        visible={pickerOpen}
+        selected={activeMonth}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(d) => setActiveMonth(d)}
+      />
     </ScrollView>
   );
 }
