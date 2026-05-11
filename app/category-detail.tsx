@@ -120,13 +120,18 @@ export default function CategoryDetailScreen() {
             <Pressable
               key={g.receiptId}
               onPress={() => {
-                // Dismiss this modal first, then push the receipt
-                // detail modal. expo-router renders modal-on-modal
-                // pushes BEHIND the active one, which makes the tap
-                // look broken — replacing the modal in place avoids
-                // that. The receipt detail screen has its own back
-                // button which lands the user on the dashboard.
-                router.replace(`/edit/${g.receiptId}` as never);
+                // Modal-on-modal navigation in expo-router is buggy:
+                // router.push() renders the new modal behind the
+                // current one, and router.replace() can silently
+                // no-op. Explicitly dismiss this modal first, then
+                // push the receipt detail modal after a short delay
+                // so the dismiss animation completes before the new
+                // modal mounts.
+                const id = g.receiptId;
+                router.back();
+                setTimeout(() => {
+                  router.push(`/edit/${id}` as never);
+                }, 220);
               }}
               style={({ pressed }) => [
                 styles.groupCard,

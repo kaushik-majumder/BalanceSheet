@@ -356,20 +356,23 @@ export default function ReportsScreen() {
                       styles.row,
                       pressed && styles.rowPressed,
                     ]}
-                    onPress={() =>
-                      // Modal-on-modal push renders the new modal
-                      // BEHIND the current one in expo-router. Replace
-                      // the current modal in place so the user sees
-                      // the new screen.
-                      router.replace({
-                        pathname: '/category-detail',
-                        params: {
-                          category: c.category,
-                          year: String(trendYear),
-                          month: String(trendMonth),
-                        },
-                      } as never)
-                    }
+                    onPress={() => {
+                      // Modal-on-modal navigation is buggy in expo-
+                      // router. Dismiss this modal, wait for the
+                      // animation, then push the next one.
+                      const navParams = {
+                        category: c.category,
+                        year: String(trendYear),
+                        month: String(trendMonth),
+                      };
+                      router.back();
+                      setTimeout(() => {
+                        router.push({
+                          pathname: '/category-detail',
+                          params: navParams,
+                        } as never);
+                      }, 220);
+                    }}
                   >
                     <Text style={styles.rowIcon}>{icon}</Text>
                     <Text style={styles.rowLabel}>{c.category}</Text>
@@ -396,11 +399,13 @@ export default function ReportsScreen() {
                     styles.standoutCard,
                     pressed && styles.rowPressed,
                   ]}
-                  onPress={() =>
-                    router.replace(
-                      `/edit/${summary.biggestReceipt!.receiptId}` as never,
-                    )
-                  }
+                  onPress={() => {
+                    const id = summary.biggestReceipt!.receiptId;
+                    router.back();
+                    setTimeout(() => {
+                      router.push(`/edit/${id}` as never);
+                    }, 220);
+                  }}
                 >
                   <Text style={styles.standoutLabel}>Biggest receipt</Text>
                   <Text style={styles.standoutAmount}>
@@ -422,11 +427,13 @@ export default function ReportsScreen() {
                     styles.standoutCard,
                     pressed && styles.rowPressed,
                   ]}
-                  onPress={() =>
-                    router.replace(
-                      `/edit/${summary.biggestItem!.receiptId}` as never,
-                    )
-                  }
+                  onPress={() => {
+                    const id = summary.biggestItem!.receiptId;
+                    router.back();
+                    setTimeout(() => {
+                      router.push(`/edit/${id}` as never);
+                    }, 220);
+                  }}
                 >
                   <Text style={styles.standoutLabel}>Biggest single item</Text>
                   <Text style={styles.standoutAmount}>
