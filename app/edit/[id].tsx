@@ -116,6 +116,11 @@ function EditReceiptScreen() {
   // selected, taps toggle selection and a bottom action bar appears.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkCategoryPicker, setShowBulkCategoryPicker] = useState(false);
+  // True once the <Image> reports it couldn't load — likely a stale
+  // cache URI from a receipt scanned before persistReceiptImage was
+  // introduced. We hide the broken image area instead of rendering
+  // an empty blank space.
+  const [imageMissing, setImageMissing] = useState(false);
   // Track the custom-tag input shown inside the bulk picker so users
   // can add a brand new tag (e.g. "Garden Supplies") without leaving
   // the sheet. Submitting applies the tag immediately AND adds it to
@@ -281,12 +286,15 @@ function EditReceiptScreen() {
       ]}
       keyboardShouldPersistTaps="handled"
     >
-      {/* Receipt image */}
-      {receipt.imageUri && (
+      {/* Receipt image — hides itself if the file is missing (older
+          receipts may have stale cache:// paths from before we
+          started copying to documentDirectory on save). */}
+      {receipt.imageUri && !imageMissing && (
         <Image
           source={{ uri: receipt.imageUri }}
           style={styles.image}
           resizeMode="cover"
+          onError={() => setImageMissing(true)}
         />
       )}
 
