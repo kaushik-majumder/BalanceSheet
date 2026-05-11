@@ -39,6 +39,30 @@ type CategoryGroup = {
   subtotal: number;
 };
 
+/** Safe wrapper around date-fns format(). Legacy receipts may have
+ *  missing/invalid createdAt/updatedAt fields; format() throws
+ *  "Invalid time value" on a NaN Date, which crashes the screen
+ *  render (background-only blue screen visible to the user). Return
+ *  empty string for invalid input so the caller can render nothing
+ *  instead of crashing. */
+function safeFormat(input: unknown, fmt: string): string {
+  if (input == null || input === '') return '';
+  try {
+    const d = new Date(input as string);
+    if (isNaN(d.getTime())) return '';
+    return format(d, fmt);
+  } catch {
+    return '';
+  }
+}
+
+/** Defensive toFixed — null/undefined/NaN amounts on legacy receipts
+ *  would crash the whole render via `undefined.toFixed`. */
+function safeAmount(n: number | null | undefined, digits = 2): string {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '0.00';
+  return n.toFixed(digits);
+}
+
 function groupItemsByCategory(
   items: LineItem[],
   receiptCategory: Category,
@@ -96,8 +120,8 @@ export default function EditReceiptScreen() {
       }
       setReceipt(r);
       setStoreName(r.storeName);
-      setDate(format(new Date(r.date), 'yyyy-MM-dd'));
-      setAmount(r.totalAmount.toFixed(2));
+      setDate(safeFormat(r.date, 'yyyy-MM-dd'));
+      setAmount(safeAmount(r.totalAmount));
       setCategory(r.category);
       setCategoryTags(r.categoryTags ?? [r.category]);
       setNotes(r.notes ?? '');
@@ -253,16 +277,22 @@ export default function EditReceiptScreen() {
         />
       )}
 
-      {/* Meta info */}
+      {/* Meta info — guard against missing/invalid timestamps on
+          legacy receipts so a bad createdAt doesn't crash the
+          whole screen render. */}
       <View style={styles.meta}>
-        <Text style={styles.metaText}>
-          Added {format(new Date(receipt.createdAt), 'MMM d, yyyy · h:mm a')}
-        </Text>
-        {receipt.updatedAt !== receipt.createdAt && (
+        {safeFormat(receipt.createdAt, 'MMM d, yyyy · h:mm a') !== '' && (
           <Text style={styles.metaText}>
-            Edited {format(new Date(receipt.updatedAt), 'MMM d, yyyy')}
+            Added {safeFormat(receipt.createdAt, 'MMM d, yyyy · h:mm a')}
           </Text>
         )}
+        {receipt.updatedAt &&
+          receipt.updatedAt !== receipt.createdAt &&
+          safeFormat(receipt.updatedAt, 'MMM d, yyyy') !== '' && (
+            <Text style={styles.metaText}>
+              Edited {safeFormat(receipt.updatedAt, 'MMM d, yyyy')}
+            </Text>
+          )}
       </View>
 
       {/* Store name */}
@@ -363,7 +393,7 @@ export default function EditReceiptScreen() {
               <View style={styles.categoryGroupHeader}>
                 <TagChip tag={group.category} size="sm" />
                 <Text style={styles.categoryGroupTotal}>
-                  ${group.subtotal.toFixed(2)}
+                  ${safeAmount(group.subtotal)}
                 </Text>
               </View>
               {group.items.map((item) => {
@@ -408,7 +438,7 @@ export default function EditReceiptScreen() {
                       {item.name}
                     </Text>
                     <Text style={styles.lineItemAmount}>
-                      ${item.amount.toFixed(2)}
+                      ${safeAmount(item.amount)}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -421,7 +451,7 @@ export default function EditReceiptScreen() {
               <View style={styles.totalsRow}>
                 <Text style={styles.totalsLabel}>Subtotal</Text>
                 <Text style={styles.totalsValue}>
-                  ${receipt.subtotalAmount.toFixed(2)}
+                  ${safeAmount(receipt.subtotalAmount)}
                 </Text>
               </View>
             )}
@@ -429,14 +459,14 @@ export default function EditReceiptScreen() {
               <View style={styles.totalsRow}>
                 <Text style={styles.totalsLabel}>Tax</Text>
                 <Text style={styles.totalsValue}>
-                  ${receipt.taxAmount.toFixed(2)}
+                  ${safeAmount(receipt.taxAmount)}
                 </Text>
               </View>
             )}
             <View style={[styles.totalsRow, styles.totalsRowGrand]}>
               <Text style={styles.totalsLabelGrand}>Total</Text>
               <Text style={styles.totalsValueGrand}>
-                ${receipt.totalAmount.toFixed(2)}
+                ${safeAmount(receipt.totalAmount)}
               </Text>
             </View>
           </View>
