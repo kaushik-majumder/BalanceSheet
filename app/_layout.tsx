@@ -40,6 +40,7 @@ const STICKY_VOLUNTARY = new Set([
   'edit',
   'profile-setup',
   'category-detail',
+  'reports',
 ]);
 
 function RootStack() {
@@ -132,6 +133,13 @@ function RootStack() {
       />
       <Stack.Screen
         name="category-detail"
+        options={{
+          presentation: 'modal',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="reports"
         options={{
           presentation: 'modal',
           headerShown: false,

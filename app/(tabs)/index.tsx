@@ -107,7 +107,17 @@ export default function DashboardScreen() {
       {/* Spending breakdown chart — tap a row to drill into the items
           and per-receipt subtotals for that category. */}
       <Card style={styles.section}>
-        <Text style={styles.sectionTitle}>Spending Breakdown</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Spending Breakdown</Text>
+          <TouchableOpacity
+            onPress={() => router.push('/reports' as never)}
+            hitSlop={8}
+            style={styles.reportsLink}
+          >
+            <Ionicons name="stats-chart" size={14} color={theme.colors.primary} />
+            <Text style={styles.reportsLinkText}>Reports</Text>
+          </TouchableOpacity>
+        </View>
         <SpendingChart
           data={stats.categories}
           onCategoryPress={(category) => {
@@ -196,9 +206,28 @@ const styles = StyleSheet.create({
   section: {
     gap: theme.spacing.md,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   sectionTitle: {
     color: theme.colors.textPrimary,
     fontSize: theme.font.lg,
+    fontWeight: '700',
+  },
+  reportsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: theme.radius.full,
+    backgroundColor: `${theme.colors.primary}1A`,
+  },
+  reportsLinkText: {
+    color: theme.colors.primary,
+    fontSize: theme.font.xs,
     fontWeight: '700',
   },
   list: {
