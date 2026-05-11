@@ -24,6 +24,7 @@ import {
 } from '../../lib/database';
 import { refineUncategorizedItems } from '../../lib/itemClassifier';
 import { parseYmdLocal } from '../../lib/parser';
+import { notifySuccess, tapLight, tapMedium } from '../../lib/haptics';
 import { Receipt, Category, LineItem } from '../../types';
 import { useStyles, useTheme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
@@ -531,6 +532,7 @@ function EditReceiptScreen() {
         notes: notes.trim() || undefined,
         lineItems: items,
       });
+      notifySuccess();
       router.back();
     } catch {
       Alert.alert('Error', 'Failed to save changes.');
@@ -547,6 +549,7 @@ function EditReceiptScreen() {
         style: 'destructive',
         onPress: async () => {
           if (!receipt) return;
+          tapMedium();
           await deleteReceipt(receipt.id);
           router.back();
         },
@@ -573,6 +576,7 @@ function EditReceiptScreen() {
 
   const applyBulkCategory = (category: Category | string) => {
     if (!receipt || selectedIds.size === 0) return;
+    tapLight();
     const next = items.map((it) =>
       selectedIds.has(it.id) ? { ...it, category } : it,
     );

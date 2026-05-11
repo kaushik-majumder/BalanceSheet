@@ -18,6 +18,7 @@ import { ReceiptCard } from '../../components/receipt/ReceiptCard';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ReceiptListSkeleton } from '../../components/ui/Skeleton';
 import { useToast } from '../../components/ui/Toast';
+import { notifySuccess, tapMedium } from '../../lib/haptics';
 import { receiptMatchesCategory } from '../../lib/receiptFilter';
 
 const FILTER_ALL = 'All' as const;
@@ -171,6 +172,7 @@ export default function HistoryScreen() {
   const handleDelete = (id: string) => {
     const target = receipts.find((r) => r.id === id);
     if (!target) return;
+    tapMedium();
     // Optimistically remove from the list so the user sees instant
     // feedback. Defer the actual DB delete by 5 seconds so they can
     // tap Undo on the toast before it lands.

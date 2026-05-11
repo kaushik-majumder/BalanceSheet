@@ -30,6 +30,7 @@ import {
 } from '../../lib/database';
 import { parseReceiptText, parseYmdLocal } from '../../lib/parser';
 import { persistReceiptImage } from '../../lib/receiptPhoto';
+import { notifySuccess } from '../../lib/haptics';
 import {
   parseReceiptWithGemini,
   parseGeminiPayload,
@@ -629,6 +630,7 @@ export default function ScanScreen() {
         });
       }
 
+      notifySuccess();
       Alert.alert('Saved!', 'Receipt has been saved successfully.', [
         {
           text: 'View Dashboard',

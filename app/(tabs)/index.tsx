@@ -19,6 +19,7 @@ import { ReceiptCard } from '../../components/receipt/ReceiptCard';
 import { Card } from '../../components/ui/Card';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useToast } from '../../components/ui/Toast';
+import { tapMedium } from '../../lib/haptics';
 import { computeStats } from '../../lib/dashboardStats';
 
 export default function DashboardScreen() {
@@ -149,6 +150,7 @@ export default function DashboardScreen() {
   const handleDelete = (id: string) => {
     const target = receipts.find((r) => r.id === id);
     if (!target) return;
+    tapMedium();
     // Optimistically remove from the list; defer DB delete 5s so the
     // user can tap Undo on the toast first.
     setReceipts((prev) => prev.filter((r) => r.id !== id));
