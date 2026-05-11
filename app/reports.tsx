@@ -20,6 +20,7 @@ import * as FileSystem from 'expo-file-system';
 import { useStyles, useTheme } from '../constants/theme';
 import { DatePickerModal } from '../components/ui/DatePickerModal';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
+import { EmptyState } from '../components/ui/EmptyState';
 import {
   ALL_CATEGORIES,
   CATEGORY_ICONS,
@@ -567,18 +568,11 @@ function ReportsScreen() {
 
           {/* Empty state */}
           {receipts.length === 0 && (
-            <View style={styles.emptyState}>
-              <Ionicons
-                name="bar-chart-outline"
-                size={48}
-                color={theme.colors.textMuted}
-              />
-              <Text style={styles.emptyTitle}>No data yet</Text>
-              <Text style={styles.emptyText}>
-                Scan a few receipts and your monthly summary, trends, and
-                top categories will appear here.
-              </Text>
-            </View>
+            <EmptyState
+              icon="bar-chart-outline"
+              title="No data yet"
+              description="Scan a few receipts and your monthly summary, trend chart, top categories, recurring expenses, and standouts will all appear here."
+            />
           )}
         </ScrollView>
       )}

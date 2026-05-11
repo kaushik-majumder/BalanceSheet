@@ -17,6 +17,7 @@ import { ALL_CATEGORIES, CATEGORY_ICONS } from '../constants/categories';
 import { getAllReceipts, getReceiptsByMonth } from '../lib/database';
 import { format as formatDate } from 'date-fns';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
+import { EmptyState } from '../components/ui/EmptyState';
 import {
   buildCategoryDrilldown,
   CategoryDrilldownResult,
@@ -241,17 +242,16 @@ function CategoryDetailScreen() {
           <ActivityIndicator color={theme.colors.primary} />
         </View>
       ) : !result || result.groups.length === 0 ? (
-        <View style={styles.empty}>
-          <Ionicons
-            name="receipt-outline"
-            size={52}
-            color={theme.colors.textMuted}
-          />
-          <Text style={styles.emptyTitle}>Nothing in {category} yet</Text>
-          <Text style={styles.emptyText}>
-            Items you scan that fall under {category} will show here.
-          </Text>
-        </View>
+        <EmptyState
+          icon="receipt-outline"
+          title={`Nothing in ${category} yet`}
+          description={
+            monthLabel
+              ? `No receipts in ${monthLabel} have items tagged ${category}. Try a different month, or tag items in this category to see them here.`
+              : `Items you scan that fall under ${category} will show up here. You can also tag existing items by opening a receipt.`
+          }
+          tint={accent}
+        />
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <View style={[styles.heroCard, { borderColor: accent }]}>

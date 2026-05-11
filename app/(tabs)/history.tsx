@@ -14,6 +14,7 @@ import { Receipt, Category } from '../../types';
 import { useStyles, useTheme } from '../../constants/theme';
 import { ALL_CATEGORIES, CATEGORY_ICONS } from '../../constants/categories';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
+import { EmptyState } from '../../components/ui/EmptyState';
 import { receiptMatchesCategory } from '../../lib/receiptFilter';
 
 const FILTER_ALL = 'All' as const;
@@ -242,13 +243,19 @@ export default function HistoryScreen() {
         contentContainerStyle={styles.listContent}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <Ionicons name="receipt-outline" size={52} color={theme.colors.textMuted} />
-            <Text style={styles.emptyTitle}>No receipts found</Text>
-            <Text style={styles.emptyText}>
-              {query ? 'Try a different search term' : 'Scan your first receipt using the camera tab'}
-            </Text>
-          </View>
+          query ? (
+            <EmptyState
+              icon="search-outline"
+              title="No receipts found"
+              description={`No receipts match "${query}". Try a different search term or clear the search to see everything.`}
+            />
+          ) : (
+            <EmptyState
+              icon="receipt-outline"
+              title="No receipts yet"
+              description="Scan your first receipt with the camera tab and it'll show up here, grouped by category and date."
+            />
+          )
         }
       />
     </View>

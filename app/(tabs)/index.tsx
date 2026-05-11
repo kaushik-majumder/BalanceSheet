@@ -17,6 +17,7 @@ import { SpendingChart } from '../../components/dashboard/SpendingChart';
 import { StatsRow } from '../../components/dashboard/StatsRow';
 import { ReceiptCard } from '../../components/receipt/ReceiptCard';
 import { Card } from '../../components/ui/Card';
+import { EmptyState } from '../../components/ui/EmptyState';
 import { computeStats } from '../../lib/dashboardStats';
 
 export default function DashboardScreen() {
@@ -239,13 +240,13 @@ export default function DashboardScreen() {
       )}
 
       {receipts.length === 0 && (
-        <Card style={styles.emptyCard}>
-          <Ionicons name="receipt-outline" size={48} color={theme.colors.textMuted} />
-          <Text style={styles.emptyTitle}>No receipts yet</Text>
-          <Text style={styles.emptyText}>
-            Tap the camera button to scan your first receipt
-          </Text>
-        </Card>
+        <EmptyState
+          icon="receipt-outline"
+          title="No receipts yet"
+          description="Tap the green camera button below to scan your first receipt and start tracking your spending."
+          actionLabel="Scan a receipt"
+          onAction={() => router.push('/(tabs)/scan')}
+        />
       )}
     </ScrollView>
   );
