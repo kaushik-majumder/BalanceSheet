@@ -41,6 +41,11 @@ export async function classifyWithGemini(
         generationConfig: {
           maxOutputTokens: 16,
           temperature: 0,
+          // Disable Gemini 2.5's chain-of-thought "thinking" tokens —
+          // a one-word category reply doesn't need reasoning, and with
+          // maxOutputTokens=16 thinking would consume the entire budget
+          // before any reply is emitted.
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
       signal,

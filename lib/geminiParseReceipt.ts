@@ -223,6 +223,14 @@ export async function parseReceiptWithGemini(
           responseSchema: RESPONSE_SCHEMA,
           temperature: 0,
           maxOutputTokens: 4096,
+          // Gemini 2.5 Flash spends most of its output budget on
+          // internal "thinking" tokens by default — for a structured-
+          // JSON receipt parse that's pure overhead, and on a long
+          // receipt it consumes the entire 4096 before any JSON is
+          // emitted, returning a truncated reply (finishReason
+          // MAX_TOKENS) that fails to parse. Disable thinking so the
+          // full budget goes to the actual JSON output.
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
       signal,
