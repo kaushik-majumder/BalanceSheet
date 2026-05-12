@@ -999,3 +999,134 @@ describe('parseReceiptText - Skechers multi-line items with BOGO discount', () =
     expect(r.date.startsWith('2025-08-31')).toBe(true);
   });
 });
+
+describe('parseReceiptText - Panchvati Supermarket grocery receipt', () => {
+  // Real-world grocery receipt with three things the parser used to
+  // mishandle:
+  //   1. Multi-buy deal qualifier lines ("3 For $4.00", "2 For $1.00")
+  //      printed beneath their item — used to be captured as ghost
+  //      items named "3 For" / "2 For".
+  //   2. Quantity rate breakdown ("2 @ $3.99") on its own line.
+  //   3. A "-$2.98" discount column entry — used to be silently dropped
+  //      because the regex didn't recognise minus-before-$, and even
+  //      after capture the inline branch filtered out negative amounts
+  //      from the price queue. Both broke 1:1 pairing in two-column OCR
+  //      and shifted every subsequent item's price by one slot.
+  const ocrColumns = [
+    'PANCHVATI SUPERMARKET',
+    '18 HARWOOD AVENUE SOUTH',
+    'AJAX, ON L1S 7L8',
+    'Bingo Tedhe Meche Masala',
+    '80g',
+    '3 For $4',
+    'Pvs Calcutta Paan 250g',
+    '2 @ $3.99',
+    'Pvs Mukhwas 250 G',
+    'Rajnigandha Silver Pearls',
+    'Pvs Coriander Seeds 200g',
+    'Pvs Cardamom Green 100g',
+    'Pvs Cinnamon Round 100g',
+    'Pvs Cumin Seeds 200g',
+    'Kur Masala Munch 100g',
+    '3 For $4.00',
+    'Uncle Chips Spicy Treat 60g',
+    '2 For $1.00',
+    'Fresh Roti Jumbo 10pcs',
+    'SUB-TOTAL',
+    'HST 5%',
+    'HST 13%',
+    'TOTAL',
+    // Price column (ML Kit two-column split).
+    '$1.49 P',
+    '$7.98',
+    '-$2.98',
+    '$3.99 P',
+    '$3.49',
+    '$9.49',
+    '$2.79',
+    '$3.99',
+    '$1.49 P',
+    '$1.49 P',
+    '$6.99 F',
+    '$40.21',
+    '$0.35',
+    '$1.10',
+    '$42.22',
+  ].join('\n');
+
+  it('does NOT emit "3 For" or "2 For" as ghost line items', () => {
+    const r = parseReceiptText(ocrColumns);
+    expect(
+      r.lineItems.some((it) => /^\s*\d+\s+(?:for|@|x)\s*$/i.test(it.name)),
+    ).toBe(false);
+    // Also: no item should claim the $4 deal price or the $1 deal price
+    // as its line amount (both come from the qualifier lines).
+    expect(r.lineItems.find((it) => /bingo/i.test(it.name))?.amount).not.toBe(4);
+    expect(
+      r.lineItems.find((it) => /uncle\s+chips/i.test(it.name))?.amount,
+    ).not.toBe(1);
+  });
+
+  it('keeps post-discount items aligned with their correct prices', () => {
+    const r = parseReceiptText(ocrColumns);
+    // Rajnigandha sits one row after the Mukhwas discount in the price
+    // column. Before the fix it inherited Coriander's $3.49 (off-by-one
+    // shift caused by the dropped -$2.98). It should be back to $3.99.
+    const rajnigandha = r.lineItems.find((it) => /rajnigandha/i.test(it.name));
+    expect(rajnigandha?.amount).toBe(3.99);
+    const coriander = r.lineItems.find((it) => /coriander/i.test(it.name));
+    expect(coriander?.amount).toBe(3.49);
+    const freshRoti = r.lineItems.find((it) => /fresh\s+roti/i.test(it.name));
+    expect(freshRoti?.amount).toBe(6.99);
+  });
+
+  it('folds the -$2.98 Mukhwas discount into the Calcutta Paan line above', () => {
+    const r = parseReceiptText(ocrColumns);
+    const calcutta = r.lineItems.find((it) => /calcutta/i.test(it.name));
+    expect(calcutta?.amount).toBeCloseTo(5.0, 2); // 7.98 - 2.98
+    expect(r.lineItems.some((it) => it.amount < 0)).toBe(false);
+  });
+});
+
+describe('parseReceiptText - negative price formats', () => {
+  // Regression: the price regex only captured leading minus when the
+  // line had NO $ sign ("-2.98"). For "-$2.98" the minus dropped and
+  // the magnitude was returned positive, so discounts were not folded.
+  it('captures "-$N.NN" (minus BEFORE the $) as a negative amount and merges it', () => {
+    const text = [
+      'Test Store',
+      '20000001 WIDGET ALPHA $10.00',
+      '20000002 LOYALTY MARKDOWN -$3.00',
+      'Subtotal $7.00',
+      'Total $7.00',
+    ].join('\n');
+    const r = parseReceiptText(text);
+    // The -$3.00 markdown should fold into the widget (10 → 7). Before
+    // the fix, the regex didn't recognise leading-minus-before-$ and
+    // captured the line as +$3.00, so the markdown stayed positive and
+    // the widget stayed at $10.
+    const widget = r.lineItems.find((it) => /widget/i.test(it.name));
+    expect(widget?.amount).toBeCloseTo(7.0, 2);
+    expect(r.lineItems.some((it) => it.amount < 0)).toBe(false);
+    expect(r.lineItems.some((it) => it.amount === 3.0)).toBe(false);
+  });
+
+  it('does NOT capture a word-trailing dash as a price sign (SKU dashes)', () => {
+    // Two SKU-style item rows: "MAVIS-" and "GIFT SET -" both end with
+    // a dash that's part of the style code. The price ($46.99 / $18.00)
+    // should be positive — not flipped to negative by our minus-before-$
+    // alternation greedily eating the trailing-name dash.
+    const text = [
+      'Test Store',
+      '197627199313 REVOLTED SD - MAVIS- $46.99T',
+      '192283775864 SHOE CARE GIFT SET - $18.00T',
+      'Subtotal $64.99',
+      'Total $64.99',
+    ].join('\n');
+    const r = parseReceiptText(text);
+    const mavis = r.lineItems.find((it) => /mavis/i.test(it.name));
+    const gift = r.lineItems.find((it) => /gift\s+set/i.test(it.name));
+    expect(mavis?.amount).toBe(46.99);
+    expect(gift?.amount).toBe(18);
+  });
+});
