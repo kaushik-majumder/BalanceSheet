@@ -53,10 +53,31 @@ service cloud.firestore {
         return request.auth != null
           && request.auth.uid in request.resource.data.memberUids;
       }
+      function hasPendingInviteForThisHousehold() {
+        // The invitee's email is the doc id of the invite. We use
+        // .lower() to mirror the lowercased email we wrote on the
+        // app side; Firebase Auth preserves whatever case the user
+        // signed up with on the auth token, so we have to normalise.
+        return request.auth != null
+          && request.auth.token.email != null
+          && exists(/databases/$(database)/documents/invites/$(request.auth.token.email.lower()))
+          && get(/databases/$(database)/documents/invites/$(request.auth.token.email.lower())).data.householdId == hid;
+      }
 
       allow read: if isMember();
       allow create: if isCreating();
-      allow update, delete: if isMember();
+      // Members can freely update. Non-members may ONLY add themselves
+      // to memberUids when they hold a pending invite for this
+      // household — that's the accept-invite path. The hasAll() check
+      // forbids them from removing anyone else; their auth.uid in the
+      // new array forbids them from adding someone else.
+      allow update: if isMember()
+        || (
+          hasPendingInviteForThisHousehold()
+          && request.resource.data.memberUids.hasAll(resource.data.memberUids)
+          && request.auth.uid in request.resource.data.memberUids
+        );
+      allow delete: if isMember();
 
       // Members subcollection — only existing household members can manage.
       match /members/{memberUid} {
