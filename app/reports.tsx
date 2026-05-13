@@ -10,7 +10,13 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { format } from 'date-fns';
+import {
+  endOfMonth,
+  format,
+  isSameMonth,
+  isSameYear,
+  startOfMonth,
+} from 'date-fns';
 import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system';
@@ -72,6 +78,38 @@ function rangeForPreset(preset: Exclude<PresetKey, 'custom'>): {
     start: new Date(now.getFullYear(), now.getMonth() - monthsBack, 1),
     end: new Date(now.getFullYear(), now.getMonth() + 1, 0),
   };
+}
+
+/**
+ * Build a human-readable filename for the exported receipt report.
+ *
+ * Patterns:
+ *   • Whole calendar month: "BalanceSheet Expense Report - May 2026"
+ *   • Custom range in one year: "BalanceSheet Expense Report - May 1 - Jun 15, 2026"
+ *   • Cross-year range: "BalanceSheet Expense Report - Dec 20, 2025 - Jan 5, 2026"
+ *
+ * Spaces and hyphens are fine on iOS/Android filesystems and look
+ * clean in the share-sheet preview where the filename is the visible
+ * label (Gmail subject, Drive title, etc.). The .pdf / .csv extension
+ * is appended by the caller.
+ */
+function buildExportFilename(start: Date, end: Date, ext: 'pdf' | 'csv'): string {
+  const isWholeMonth =
+    isSameMonth(start, end) &&
+    start.getTime() === startOfMonth(start).getTime() &&
+    // endOfMonth includes 23:59:59 — compare day numbers so trivial
+    // hour/minute drift in the range bounds doesn't break detection.
+    end.getDate() === endOfMonth(end).getDate();
+
+  let label: string;
+  if (isWholeMonth) {
+    label = format(start, 'MMMM yyyy');
+  } else if (isSameYear(start, end)) {
+    label = `${format(start, 'MMM d')} - ${format(end, 'MMM d, yyyy')}`;
+  } else {
+    label = `${format(start, 'MMM d, yyyy')} - ${format(end, 'MMM d, yyyy')}`;
+  }
+  return `BalanceSheet Expense Report - ${label}.${ext}`;
 }
 
 export default function ReportsScreenWrapped() {
@@ -177,7 +215,6 @@ function ReportsScreen() {
     }
     setExporting(true);
     try {
-      const stamp = `${format(start, 'yyyy-MM-dd')}_to_${format(end, 'yyyy-MM-dd')}`;
       const startLabel = format(start, 'PP');
       const endLabel = format(end, 'PP');
 
@@ -188,26 +225,29 @@ function ReportsScreen() {
       let path: string | null = null;
       let mimeType = 'application/pdf';
       let uti = 'com.adobe.pdf';
-      let dialogTitle = 'Export receipts PDF';
+      let dialogTitle = 'Export expense report';
 
       if (isPdfExportAvailable()) {
+        const filename = buildExportFilename(start, end, 'pdf');
         path = await generateReceiptsPdf({
           receipts: rangeReceipts,
           startLabel,
           endLabel,
+          filename,
         });
       }
 
       if (!path) {
         // CSV fallback (or this is an older APK without expo-print).
         const csv = receiptsToCsv(rangeReceipts);
-        path = `${FileSystem.documentDirectory}balancesheet-${stamp}.csv`;
+        const filename = buildExportFilename(start, end, 'csv');
+        path = `${FileSystem.documentDirectory}${filename}`;
         await FileSystem.writeAsStringAsync(path, csv, {
           encoding: FileSystem.EncodingType.UTF8,
         });
         mimeType = 'text/csv';
         uti = 'public.comma-separated-values-text';
-        dialogTitle = 'Export receipts CSV';
+        dialogTitle = 'Export expense report';
       }
 
       // Lazy-require expo-sharing — the native side wasn't in the
