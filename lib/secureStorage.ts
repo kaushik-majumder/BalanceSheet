@@ -7,6 +7,12 @@ const Keys = {
   anthropicApiKey: 'bs.anthropic.apiKey',
   geminiApiKey: 'bs.gemini.apiKey',
   aiClassifyEnabled: 'bs.aiClassify.enabled',
+  // One-shot Phase-2 marker — once we've successfully uploaded all
+  // existing local receipts to Firestore for this user we set this so
+  // the migration doesn't re-run on every launch. Stored per-user via
+  // the suffix `:${uid}` so different users on the same device each
+  // do their own one-time backfill.
+  cloudMigrationDone: 'bs.cloud.migrationDone',
 } as const;
 
 export async function getOnboardingSeen(): Promise<boolean> {
@@ -38,6 +44,15 @@ export async function getBiometricAsked(): Promise<boolean> {
 
 export async function setBiometricAsked(): Promise<void> {
   await SecureStore.setItemAsync(Keys.biometricAsked, '1');
+}
+
+export async function getCloudMigrationDone(uid: string): Promise<boolean> {
+  const v = await SecureStore.getItemAsync(`${Keys.cloudMigrationDone}:${uid}`);
+  return v === '1';
+}
+
+export async function setCloudMigrationDone(uid: string): Promise<void> {
+  await SecureStore.setItemAsync(`${Keys.cloudMigrationDone}:${uid}`, '1');
 }
 
 export async function getAnthropicApiKey(): Promise<string | null> {

@@ -40,6 +40,12 @@ export interface Receipt {
   categoryTags?: string[];
   rawText?: string;
   imageUri?: string;
+  /** Phase 2: cloud-hosted copy of the receipt photo. Populated by
+   *  cloudSync.uploadReceiptPhoto on save; consumed by other devices
+   *  in the same household (Phase 3). Same image, different home —
+   *  imageUri stays the path on THIS device, photoUrl is the shared
+   *  Cloud Storage URL. */
+  photoUrl?: string;
   notes?: string;
   lineItems?: LineItem[];
   createdAt: string;
