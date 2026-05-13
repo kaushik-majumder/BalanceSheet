@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system';
 import { Receipt } from '../types';
 
 /**
@@ -211,11 +212,18 @@ ${receiptCards || '<p class="muted">No receipts in this range.</p>'}
  * Generate a PDF for the given receipts. Returns the file URI, or
  * `null` if expo-print isn't linked in the running build (caller
  * should fall back to CSV).
+ *
+ * If `filename` is provided, the raw printToFileAsync output (which
+ * gets an auto-generated name like `Print_<timestamp>.pdf`) is moved
+ * into the app's documentDirectory under that name, so the share
+ * sheet's preview label, the saved-to-Files name, and the email
+ * attachment all show the friendly name instead of "Print_XXXX.pdf".
  */
 export async function generateReceiptsPdf(args: {
   receipts: Receipt[];
   startLabel: string;
   endLabel: string;
+  filename?: string;
 }): Promise<string | null> {
   const Print = loadPrint();
   if (!Print) return null;
@@ -229,7 +237,22 @@ export async function generateReceiptsPdf(args: {
       height: 792,
       base64: false,
     });
-    return uri;
+    if (!args.filename) return uri;
+    // Rename into documentDirectory so the share-sheet sees the
+    // friendly filename. moveAsync is atomic on both iOS and Android,
+    // and the cache-directory original is removed in the same call.
+    const dest = `${FileSystem.documentDirectory}${args.filename}`;
+    try {
+      // If a previous export with the same name is still on disk,
+      // delete it first — moveAsync errors on an existing destination.
+      await FileSystem.deleteAsync(dest, { idempotent: true });
+      await FileSystem.moveAsync({ from: uri, to: dest });
+      return dest;
+    } catch {
+      // The rename is a nice-to-have; if it fails we still have the
+      // valid auto-named PDF and return that.
+      return uri;
+    }
   } catch {
     return null;
   }
