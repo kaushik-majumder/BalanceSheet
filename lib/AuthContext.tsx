@@ -12,7 +12,13 @@ import {
   signOutEverywhere,
 } from './auth';
 import { Profile, getProfile, deleteProfile } from './profile';
-import { deleteAllReceipts, setCurrentUserId } from './database';
+import {
+  deleteAllReceipts,
+  getAllReceipts,
+  setCurrentHouseholdId,
+  setCurrentUserId,
+} from './database';
+import { ensureHouseholdForUser, migrateLocalReceiptsToCloud } from './cloudSync';
 import {
   getBiometricAsked,
   getBiometricEnabled,
@@ -110,7 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user?.uid]);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged((u) => {
+    const unsub = onAuthStateChanged(async (u) => {
       setUser(u);
       if (!u) setBiometricUnlocked(false);
       setInitializing(false);
@@ -123,6 +129,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // setCurrentUserId is intentionally tolerant of pre-migration
         // schemas; any error here is non-fatal.
       });
+
+      // Phase 2 cloud sync: ensure the user has a household in
+      // Firestore + push the household id into the DB layer so every
+      // shadow-write knows where to land. ensureHouseholdForUser is
+      // defensive — it returns null when Firestore isn't enabled or
+      // not installed in the running APK, so the rest of the app
+      // continues to work in local-only mode.
+      if (u?.uid) {
+        const hid = await ensureHouseholdForUser({
+          uid: u.uid,
+          email: u.email,
+          displayName: u.displayName,
+        });
+        setCurrentHouseholdId(hid);
+        // One-shot backfill of every pre-existing local receipt into
+        // the new household. Runs in the background — fully fire-
+        // and-forget; the marker in SecureStore prevents repeats.
+        if (hid) {
+          void migrateLocalReceiptsToCloud({
+            uid: u.uid,
+            householdId: hid,
+            loadAllReceipts: getAllReceipts,
+          });
+        }
+      } else {
+        setCurrentHouseholdId(null);
+      }
     });
     return unsub;
   }, []);

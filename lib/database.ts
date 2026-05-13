@@ -1,5 +1,10 @@
 import * as SQLite from 'expo-sqlite';
 import { Receipt, LineItem } from '../types';
+import {
+  syncReceiptDeletionToCloud,
+  syncReceiptToCloud,
+  uploadReceiptPhoto,
+} from './cloudSync';
 
 const db = SQLite.openDatabaseSync('receipts.db');
 
@@ -19,6 +24,20 @@ const db = SQLite.openDatabaseSync('receipts.db');
 // one current user at a time.
 
 let currentUserId: string | null = null;
+// Phase 2: cloud sync writes need a partition key. Stamped by
+// AuthContext after ensureHouseholdForUser resolves. Stays null in
+// local-only mode (older APK without Firestore, or before the
+// console-side setup is done) — shadow writes silently skip when
+// there's no household.
+let currentHouseholdId: string | null = null;
+
+export function setCurrentHouseholdId(hid: string | null): void {
+  currentHouseholdId = hid;
+}
+
+export function getCurrentHouseholdId(): string | null {
+  return currentHouseholdId;
+}
 
 /**
  * Set or clear the currently authenticated user. Called by AuthContext
@@ -132,6 +151,10 @@ export async function initDatabase(): Promise<void> {
     // after the schema migration.
     `ALTER TABLE receipts             ADD COLUMN user_id  TEXT`,
     `ALTER TABLE receipt_corrections  ADD COLUMN user_id  TEXT`,
+    // Phase 2: cached Cloud Storage URL of the receipt photo so we
+    // don't re-upload it on every shadow-write. Filled in by the
+    // post-upload writeback in setReceiptPhotoUrl().
+    `ALTER TABLE receipts             ADD COLUMN photo_url TEXT`,
   ]) {
     try {
       await db.execAsync(sql);
@@ -409,6 +432,7 @@ export async function replaceLineItems(
     [receiptId, uid],
   );
   if (!ownedRow) return;
+  const hid = currentHouseholdId;
   await db.withTransactionAsync(async () => {
     await db.runAsync(`DELETE FROM line_items WHERE receipt_id=?`, [receiptId]);
     for (const item of items) {
@@ -423,6 +447,14 @@ export async function replaceLineItems(
       [new Date().toISOString(), receiptId, uid],
     );
   });
+  // Reload the full receipt and shadow-write — replaceLineItems is
+  // called in isolation from the per-item edit modal, which doesn't
+  // go through updateReceipt, so without this hook line-item edits
+  // would only land locally.
+  if (hid) {
+    const fresh = await getReceiptById(receiptId).catch(() => null);
+    if (fresh) void syncReceiptToCloud(fresh, hid);
+  }
 }
 
 /**
@@ -494,12 +526,17 @@ export async function deleteProfileRow(uid: string): Promise<void> {
 export async function saveReceipt(receipt: Receipt): Promise<void> {
   const uid = requireUserId('saveReceipt');
   const tagsJson = serializeTags(receipt.categoryTags);
+  // Cloud shadow-write fires AFTER the local commit succeeds. We
+  // capture the receipt + household id outside the transaction so
+  // the post-commit hook doesn't depend on any in-transaction state.
+  const hid = currentHouseholdId;
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       `INSERT INTO receipts
          (id, store_name, date, total_amount, subtotal_amount, tax_amount,
-          category, category_tags, raw_text, image_uri, notes, created_at, updated_at, user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          category, category_tags, raw_text, image_uri, photo_url, notes,
+          created_at, updated_at, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         receipt.id,
         receipt.storeName,
@@ -511,6 +548,7 @@ export async function saveReceipt(receipt: Receipt): Promise<void> {
         tagsJson,
         receipt.rawText ?? null,
         receipt.imageUri ?? null,
+        receipt.photoUrl ?? null,
         receipt.notes ?? null,
         receipt.createdAt,
         receipt.updatedAt,
@@ -525,10 +563,18 @@ export async function saveReceipt(receipt: Receipt): Promise<void> {
       );
     }
   });
+  // Shadow-write to Firestore once the local commit is durable. Fire-
+  // and-forget — failure here is logged, not surfaced (local already
+  // succeeded, sync will retry on the next update or via the explicit
+  // re-sync helpers).
+  if (hid) {
+    void syncReceiptToCloud(receipt, hid);
+  }
 }
 
 export async function updateReceipt(receipt: Receipt): Promise<void> {
   const uid = requireUserId('updateReceipt');
+  const hid = currentHouseholdId;
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       `UPDATE receipts
@@ -570,6 +616,12 @@ export async function updateReceipt(receipt: Receipt): Promise<void> {
       }
     }
   });
+  // Mirror the updated state to Firestore. We resync the WHOLE
+  // receipt (not a delta) so the cloud doc always matches what's on
+  // the device — simpler reasoning, and the doc payload is tiny.
+  if (hid) {
+    void syncReceiptToCloud(receipt, hid);
+  }
 }
 
 function serializeTags(tags: string[] | undefined): string | null {
@@ -592,7 +644,11 @@ function parseTags(raw: string | null, fallbackCategory: string): string[] {
 
 export async function deleteReceipt(id: string): Promise<void> {
   const uid = requireUserId('deleteReceipt');
+  const hid = currentHouseholdId;
   await db.runAsync(`DELETE FROM receipts WHERE id=? AND user_id=?`, [id, uid]);
+  if (hid) {
+    void syncReceiptDeletionToCloud(id, hid);
+  }
 }
 
 export async function getAllReceipts(): Promise<Receipt[]> {
@@ -696,6 +752,7 @@ interface RawRow {
   category_tags: string | null;
   raw_text: string | null;
   image_uri: string | null;
+  photo_url: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -713,8 +770,26 @@ function rowToReceipt(row: RawRow): Receipt {
     categoryTags: parseTags(row.category_tags, row.category),
     rawText: row.raw_text ?? undefined,
     imageUri: row.image_uri ?? undefined,
+    photoUrl: row.photo_url ?? undefined,
     notes: row.notes ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Persist a successful Cloud Storage upload URL back into the local
+ * row. Called by cloudSync.syncReceiptToCloud after uploadReceiptPhoto
+ * succeeds, so the next save on this receipt sees photoUrl set and
+ * skips the re-upload.
+ */
+export async function setReceiptPhotoUrl(
+  receiptId: string,
+  photoUrl: string,
+): Promise<void> {
+  const uid = requireUserId('setReceiptPhotoUrl');
+  await db.runAsync(
+    `UPDATE receipts SET photo_url=? WHERE id=? AND user_id=?`,
+    [photoUrl, receiptId, uid],
+  );
 }
