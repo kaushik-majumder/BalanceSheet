@@ -1,4 +1,5 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert } from 'react-native';
 import Constants from 'expo-constants';
 import {
   AuthProvider as FirebaseProviderId,
@@ -18,7 +19,14 @@ import {
   setCurrentHouseholdId,
   setCurrentUserId,
 } from './database';
-import { ensureHouseholdForUser, migrateLocalReceiptsToCloud } from './cloudSync';
+import {
+  acceptInvite,
+  declineInvite,
+  ensureHouseholdForUser,
+  getPendingInviteForEmail,
+  migrateLocalReceiptsToCloud,
+  subscribeToHouseholdReceipts,
+} from './cloudSync';
 import {
   getBiometricAsked,
   getBiometricEnabled,
@@ -115,6 +123,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user?.uid]);
 
+  // Phase 3: track the active receipts listener so we can tear it down
+  // on sign-out / household change before re-subscribing. Without this
+  // we'd accumulate orphaned listeners every time the user signs in.
+  const receiptsUnsubRef = useRef<(() => void) | null>(null);
+  const tearDownReceiptsListener = useCallback(() => {
+    if (receiptsUnsubRef.current) {
+      receiptsUnsubRef.current();
+      receiptsUnsubRef.current = null;
+    }
+  }, []);
+  // Avoid re-prompting on every auth state echo. Firebase fires the
+  // listener multiple times for token refresh, focus changes, etc.;
+  // we only want the invite dialog shown once per session.
+  const invitePromptedForUidRef = useRef<string | null>(null);
+
   useEffect(() => {
     const unsub = onAuthStateChanged(async (u) => {
       setUser(u);
@@ -136,6 +159,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // defensive — it returns null when Firestore isn't enabled or
       // not installed in the running APK, so the rest of the app
       // continues to work in local-only mode.
+      // Tear down any previous user's receipts listener before we
+      // potentially bootstrap a new household and subscribe again.
+      tearDownReceiptsListener();
+
       if (u?.uid) {
         const hid = await ensureHouseholdForUser({
           uid: u.uid,
@@ -152,9 +179,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             householdId: hid,
             loadAllReceipts: getAllReceipts,
           });
+          // Phase 3: start mirroring cloud → local SQLite. Any
+          // change to this household's receipts (from THIS device or
+          // any other family member) flows in here. The unsubscribe
+          // closure is held so the next auth state change can clean it
+          // up before re-subscribing.
+          const unsubReceipts = subscribeToHouseholdReceipts(hid, u.uid);
+          if (unsubReceipts) receiptsUnsubRef.current = unsubReceipts;
+
+          // Phase 3: check for a pending invite addressed to this
+          // user's email. Once-per-session gate via the ref so a
+          // token refresh doesn't re-fire the prompt.
+          if (invitePromptedForUidRef.current !== u.uid) {
+            invitePromptedForUidRef.current = u.uid;
+            void (async () => {
+              const invite = await getPendingInviteForEmail(u.email);
+              if (!invite) return;
+              const inviter =
+                invite.invitedByName ?? invite.invitedByEmail ?? 'Someone';
+              Alert.alert(
+                "You've been invited to a family",
+                `${inviter} invited you to join their household on BalanceSheet. Accepting moves your account to their shared household — you'll see their receipts and they'll see any you scan from now on.`,
+                [
+                  {
+                    text: 'Decline',
+                    style: 'cancel',
+                    onPress: () => {
+                      void declineInvite({ invite });
+                    },
+                  },
+                  {
+                    text: 'Accept',
+                    onPress: async () => {
+                      if (!u.uid) return;
+                      const res = await acceptInvite({ invite, uid: u.uid });
+                      if (!res.ok) {
+                        Alert.alert('Accept failed', res.reason);
+                        return;
+                      }
+                      // Re-bootstrap the household pointers + listener
+                      // so the rest of the app immediately sees the
+                      // new household's data.
+                      tearDownReceiptsListener();
+                      setCurrentHouseholdId(res.newHouseholdId);
+                      const unsubNew = subscribeToHouseholdReceipts(
+                        res.newHouseholdId,
+                        u.uid,
+                      );
+                      if (unsubNew) receiptsUnsubRef.current = unsubNew;
+                      Alert.alert(
+                        'Joined household',
+                        'You now share receipts with the family. Force-close + reopen the app to refresh the dashboard.',
+                      );
+                    },
+                  },
+                ],
+                { cancelable: false },
+              );
+            })();
+          }
         }
       } else {
         setCurrentHouseholdId(null);
+        invitePromptedForUidRef.current = null;
       }
     });
     return unsub;

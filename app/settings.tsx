@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Image,
@@ -27,8 +27,13 @@ import {
 import { parseReceiptWithGemini } from '../lib/geminiParseReceipt';
 import {
   getCloudSyncDiagnostics,
+  getHouseholdMembers,
+  inviteUserToHousehold,
+  leaveCurrentHousehold,
   subscribeCloudSyncDiagnostics,
+  type HouseholdMember,
 } from '../lib/cloudSync';
+import { setCurrentHouseholdId, getCurrentHouseholdId } from '../lib/database';
 
 function useSettingsStyles() {
   return useStyles((theme) => ({
@@ -605,6 +610,10 @@ export default function SettingsScreen() {
           </View>
         </Section>
 
+        <Section title="Family">
+          <FamilyPanel />
+        </Section>
+
         <Section title="Cloud sync (debug)">
           <CloudSyncDiagnosticsPanel />
         </Section>
@@ -631,6 +640,254 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * Family / household management. Shows everyone currently a member of
+ * the user's active household, lets the user invite a new member by
+ * email, and offers a "Leave household" action that puts them back in
+ * a solo household.
+ *
+ * Invites are written to the top-level `invites/{lowercased-email}`
+ * Firestore collection. The invitee's app checks for a pending invite
+ * on every sign-in (see lib/AuthContext.tsx) and surfaces an accept
+ * modal. We deliberately don't send an email — that would require
+ * Firebase Dynamic Links (deprecated) or a Cloud Functions setup. The
+ * inviter is expected to tell the invitee to install the app & sign
+ * in with the email that received the invite.
+ */
+function FamilyPanel() {
+  const theme = useTheme();
+  const styles = useSettingsStyles();
+  const { user } = useAuth();
+  const [members, setMembers] = useState<HouseholdMember[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [inviting, setInviting] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [showInviteInput, setShowInviteInput] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!user?.uid) return;
+    const hid = getCurrentHouseholdId();
+    if (!hid) {
+      setMembers(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const list = await getHouseholdMembers({ householdId: hid, currentUid: user.uid });
+    setMembers(list);
+    setLoading(false);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const handleInvite = async () => {
+    if (!user?.uid) return;
+    const hid = getCurrentHouseholdId();
+    if (!hid) {
+      Alert.alert('No active household', 'Cloud sync isn\'t fully set up yet — try again in a moment.');
+      return;
+    }
+    const trimmed = inviteEmail.trim();
+    if (!trimmed || !trimmed.includes('@')) {
+      Alert.alert('Invalid email', 'Please enter a valid email address.');
+      return;
+    }
+    if (trimmed.toLowerCase() === user.email?.toLowerCase()) {
+      Alert.alert('Already you', 'You\'re already a member of this household.');
+      return;
+    }
+    setInviting(true);
+    const res = await inviteUserToHousehold({
+      email: trimmed,
+      householdId: hid,
+      invitedByUid: user.uid,
+      invitedByEmail: user.email ?? null,
+      invitedByName: user.displayName ?? null,
+    });
+    setInviting(false);
+    if (!res.ok) {
+      Alert.alert('Invite failed', res.reason);
+      return;
+    }
+    setInviteEmail('');
+    setShowInviteInput(false);
+    Alert.alert(
+      'Invite sent',
+      `${trimmed} will see the invite the next time they sign in to BalanceSheet. They need to install the app and sign in with that exact email.`,
+    );
+    refresh();
+  };
+
+  const handleLeave = () => {
+    if (!user?.uid) return;
+    const hid = getCurrentHouseholdId();
+    if (!hid) return;
+    const otherCount = (members ?? []).filter((m) => !m.isYou).length;
+    const msg =
+      otherCount > 0
+        ? `Other members will still see all receipts in this household. You'll move to a brand-new solo household — any receipts you saved while sharing stay with the family.`
+        : `You're the only member. The household will be left in place (you can rejoin later if you keep the household id), but a new solo household will be created for you.`;
+    Alert.alert('Leave household?', msg, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Leave',
+        style: 'destructive',
+        onPress: async () => {
+          setLeaving(true);
+          const res = await leaveCurrentHousehold({
+            uid: user.uid,
+            currentHouseholdId: hid,
+            email: user.email ?? null,
+            displayName: user.displayName ?? null,
+          });
+          setLeaving(false);
+          if (!res.ok) {
+            Alert.alert('Leave failed', res.reason);
+            return;
+          }
+          setCurrentHouseholdId(res.newSoloHouseholdId);
+          refresh();
+          Alert.alert('Left household', 'You now have your own solo household. Force-close + reopen for receipts to refresh.');
+        },
+      },
+    ]);
+  };
+
+  if (loading) {
+    return (
+      <Text style={{ color: theme.colors.textMuted, fontSize: theme.font.sm }}>
+        Loading household…
+      </Text>
+    );
+  }
+  if (!members) {
+    return (
+      <Text style={{ color: theme.colors.textMuted, fontSize: theme.font.sm }}>
+        Cloud sync isn't ready yet — check back in a moment, or look at the debug panel below.
+      </Text>
+    );
+  }
+  return (
+    <View style={{ gap: 8 }}>
+      {members.map((m) => (
+        <View
+          key={m.uid}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            paddingVertical: 6,
+          }}
+        >
+          <Ionicons
+            name={m.isYou ? 'person-circle' : 'person-circle-outline'}
+            size={28}
+            color={m.isYou ? theme.colors.primary : theme.colors.textSecondary}
+          />
+          <View style={{ flex: 1 }}>
+            <Text
+              style={{
+                color: theme.colors.textPrimary,
+                fontSize: theme.font.md,
+                fontWeight: '600',
+              }}
+              numberOfLines={1}
+            >
+              {m.displayName ?? m.email ?? m.uid.slice(0, 8)}
+              {m.isYou ? '  (you)' : ''}
+            </Text>
+            {m.email && m.email !== m.displayName ? (
+              <Text
+                style={{ color: theme.colors.textMuted, fontSize: theme.font.xs }}
+                numberOfLines={1}
+              >
+                {m.email}
+              </Text>
+            ) : null}
+          </View>
+          {m.role === 'owner' ? (
+            <Text
+              style={{
+                color: theme.colors.primary,
+                fontSize: theme.font.xs,
+                fontWeight: '600',
+              }}
+            >
+              Owner
+            </Text>
+          ) : null}
+        </View>
+      ))}
+
+      {showInviteInput ? (
+        <View style={{ gap: 8, marginTop: 4 }}>
+          <TextInput
+            value={inviteEmail}
+            onChangeText={setInviteEmail}
+            placeholder="family@example.com"
+            placeholderTextColor={theme.colors.textMuted}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.keyInput}
+          />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Pressable
+              onPress={() => {
+                setShowInviteInput(false);
+                setInviteEmail('');
+              }}
+              style={[styles.linkRow, { flex: 1 }]}
+            >
+              <Text style={styles.linkText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleInvite}
+              disabled={inviting}
+              style={[
+                styles.linkRow,
+                {
+                  flex: 1,
+                  backgroundColor: theme.colors.primary,
+                  opacity: inviting ? 0.5 : 1,
+                  justifyContent: 'center',
+                },
+              ]}
+            >
+              <Text style={[styles.linkText, { color: '#fff' }]}>
+                {inviting ? 'Sending…' : 'Send invite'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : (
+        <Pressable
+          onPress={() => setShowInviteInput(true)}
+          style={styles.linkRow}
+        >
+          <Text style={styles.linkText}>+ Invite family member</Text>
+          <Ionicons name="chevron-forward" size={16} color={theme.colors.primary} />
+        </Pressable>
+      )}
+
+      {members.length > 1 || members.some((m) => !m.isYou) ? (
+        <Pressable
+          onPress={handleLeave}
+          disabled={leaving}
+          style={[styles.linkRow, { opacity: leaving ? 0.5 : 1 }]}
+        >
+          <Text style={[styles.linkText, { color: theme.colors.error }]}>
+            {leaving ? 'Leaving…' : 'Leave household'}
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
