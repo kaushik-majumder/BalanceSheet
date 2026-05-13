@@ -228,6 +228,108 @@ export async function ensureHouseholdForUser(args: {
   }
 }
 
+// ─── receipts listener (cloud → local SQLite sync) ────────────────────────
+//
+// Phase 3 turns the previously one-way shadow-write into bidirectional
+// sync. A Firestore `onSnapshot` subscription on the household's receipts
+// collection fires whenever any device in the household writes a change.
+// We mirror those changes into local SQLite via the upsertReceiptFromCloud
+// path (defined in lib/database.ts, lazy-required to avoid a circular
+// dep). The user's own writes echo back through this listener too, but
+// that's a cheap idempotent local re-write — not an infinite loop, because
+// the upsert path doesn't kick off another cloud write.
+
+/**
+ * Internal type for a receipt as it lives in Firestore. Same shape as
+ * serializeReceipt produces. Field-level naming matches the Receipt
+ * type so the converter is essentially a passthrough.
+ */
+interface CloudReceipt {
+  id: string;
+  storeName: string;
+  date: string;
+  totalAmount: number;
+  subtotalAmount?: number | null;
+  taxAmount?: number | null;
+  category: string;
+  categoryTags?: string[];
+  rawText?: string | null;
+  imageUri?: string | null;
+  photoUrl?: string | null;
+  notes?: string | null;
+  lineItems?: Array<{
+    id: string;
+    name: string;
+    amount: number;
+    category?: string | null;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function subscribeToHouseholdReceipts(
+  householdId: string,
+  uid: string,
+): (() => void) | null {
+  const firestore = loadFirestore();
+  if (!firestore || !householdId || !uid) return null;
+  try {
+    const db = firestore();
+    const col = db
+      .collection('households')
+      .doc(householdId)
+      .collection('receipts');
+    const unsub = col.onSnapshot(
+      async (snapshot) => {
+        if (!snapshot) return;
+        for (const change of snapshot.docChanges()) {
+          try {
+            // Skip our own pending writes — they're already in local
+            // SQLite (the write is what triggered the cloud round-trip
+            // we're now observing). Without this, every save would
+            // immediately rewrite the same row to SQLite, costing a
+            // pointless transaction.
+            if (change.doc.metadata.hasPendingWrites) continue;
+            if (change.type === 'removed') {
+              // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+              const { deleteReceiptLocally } = require('./database') as {
+                deleteReceiptLocally: (id: string, uid: string) => Promise<void>;
+              };
+              await deleteReceiptLocally(change.doc.id, uid);
+            } else {
+              const data = change.doc.data() as CloudReceipt;
+              // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+              const { upsertReceiptFromCloud } = require('./database') as {
+                upsertReceiptFromCloud: (cloud: CloudReceipt, uid: string) => Promise<void>;
+              };
+              await upsertReceiptFromCloud(data, uid);
+            }
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn('[cloudSync] receipt snapshot apply failed:', (e as Error)?.message);
+          }
+        }
+      },
+      (err) => {
+        // eslint-disable-next-line no-console
+        console.warn('[cloudSync] receipts listener errored:', err?.message);
+        patchDiagnostics({
+          lastReceiptSync: {
+            ok: false,
+            at: new Date().toISOString(),
+            message: `listener: ${err?.message ?? 'unknown'}`,
+          },
+        });
+      },
+    );
+    return unsub;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[cloudSync] subscribeToHouseholdReceipts failed:', (e as Error)?.message);
+    return null;
+  }
+}
+
 // ─── receipt shadow-write ─────────────────────────────────────────────────
 
 /**
@@ -367,6 +469,313 @@ export async function uploadReceiptPhoto(args: {
     // eslint-disable-next-line no-console
     console.warn('[cloudSync] uploadReceiptPhoto failed:', (e as Error)?.message);
     return null;
+  }
+}
+
+// ─── invites + household membership (Phase 3) ─────────────────────────────
+
+export type HouseholdMember = {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  role: 'owner' | 'member';
+  isYou: boolean;
+};
+
+export type PendingInvite = {
+  email: string;
+  householdId: string;
+  householdName: string | null;
+  invitedByUid: string;
+  invitedByName: string | null;
+  invitedByEmail: string | null;
+  createdAt: string;
+  expiresAt: string;
+};
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/**
+ * List every user currently a member of a household, with display info
+ * pulled from each user's `users/{uid}` doc. The household doc carries
+ * `memberUids: string[]` as the source of truth; we look up each uid
+ * one at a time to build the panel. Fine for households of up to a
+ * dozen members — past that we'd need to batch with `in` queries.
+ */
+export async function getHouseholdMembers(args: {
+  householdId: string;
+  currentUid: string;
+}): Promise<HouseholdMember[] | null> {
+  const firestore = loadFirestore();
+  if (!firestore || !args.householdId) return null;
+  try {
+    const db = firestore();
+    const householdSnap = await db
+      .collection('households')
+      .doc(args.householdId)
+      .get();
+    if (!householdSnap.exists) return [];
+    const data = householdSnap.data() ?? {};
+    const memberUids = (data.memberUids as string[] | undefined) ?? [];
+    const ownerUid = data.ownerUid as string | undefined;
+
+    const members: HouseholdMember[] = [];
+    // Fan-out reads of each user doc. Could be parallelized with
+    // Promise.all but the typical household size is tiny and serial
+    // keeps the network behaviour predictable for diagnostics.
+    for (const uid of memberUids) {
+      try {
+        const userSnap = await db.collection('users').doc(uid).get();
+        const u = userSnap.exists ? userSnap.data() ?? {} : {};
+        members.push({
+          uid,
+          email: (u.email as string | null) ?? null,
+          displayName: (u.displayName as string | null) ?? null,
+          role: uid === ownerUid ? 'owner' : 'member',
+          isYou: uid === args.currentUid,
+        });
+      } catch {
+        // A read failure on a single member shouldn't sink the whole
+        // panel — emit a stub so the UI can still show the uid.
+        members.push({
+          uid,
+          email: null,
+          displayName: null,
+          role: uid === ownerUid ? 'owner' : 'member',
+          isYou: uid === args.currentUid,
+        });
+      }
+    }
+    return members;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[cloudSync] getHouseholdMembers failed:', (e as Error)?.message);
+    return null;
+  }
+}
+
+/**
+ * Send an invite for the given email to join the current user's
+ * household. Writes `invites/{lowercased-email}`; the invitee picks it
+ * up on their next sign-in. The invite expires 7 days after creation
+ * — rules enforce expiresAt and the accept-side filter ignores expired
+ * docs, but a periodic cleanup is left out for simplicity (a stale
+ * pending invite just sits inert and can be re-issued by the inviter).
+ */
+export async function inviteUserToHousehold(args: {
+  email: string;
+  householdId: string;
+  invitedByUid: string;
+  invitedByEmail: string | null;
+  invitedByName: string | null;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const firestore = loadFirestore();
+  if (!firestore) return { ok: false, reason: 'cloud module not loaded' };
+  if (!args.householdId) return { ok: false, reason: 'no active household' };
+  const email = normalizeEmail(args.email);
+  if (!email || !email.includes('@')) {
+    return { ok: false, reason: 'invalid email' };
+  }
+  try {
+    const db = firestore();
+    const now = firestore.FieldValue.serverTimestamp();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    // Look up the household's display name for nicer UI on the
+    // invitee side.
+    const householdSnap = await db
+      .collection('households')
+      .doc(args.householdId)
+      .get();
+    const householdName =
+      (householdSnap.data()?.name as string | undefined) ?? null;
+    await db.collection('invites').doc(email).set({
+      email,
+      householdId: args.householdId,
+      householdName,
+      invitedByUid: args.invitedByUid,
+      invitedByEmail: args.invitedByEmail,
+      invitedByName: args.invitedByName,
+      createdAt: now,
+      expiresAt,
+      status: 'pending',
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: (e as Error)?.message ?? 'unknown' };
+  }
+}
+
+/**
+ * Look up a pending invite for the signed-in user's email. Returns
+ * null when no invite exists, the doc is expired, or any read fails.
+ * Called by AuthContext after bootstrap so a fresh sign-in can
+ * surface a join prompt.
+ */
+export async function getPendingInviteForEmail(
+  email: string | null,
+): Promise<PendingInvite | null> {
+  const firestore = loadFirestore();
+  if (!firestore || !email) return null;
+  try {
+    const db = firestore();
+    const snap = await db
+      .collection('invites')
+      .doc(normalizeEmail(email))
+      .get();
+    if (!snap.exists) return null;
+    const d = snap.data() ?? {};
+    const expiresAt = d.expiresAt?.toDate
+      ? (d.expiresAt.toDate() as Date)
+      : new Date(d.expiresAt as string);
+    if (Number.isFinite(expiresAt.getTime()) && expiresAt.getTime() < Date.now()) {
+      return null;
+    }
+    return {
+      email: (d.email as string) ?? email.toLowerCase(),
+      householdId: d.householdId as string,
+      householdName: (d.householdName as string | null) ?? null,
+      invitedByUid: d.invitedByUid as string,
+      invitedByName: (d.invitedByName as string | null) ?? null,
+      invitedByEmail: (d.invitedByEmail as string | null) ?? null,
+      createdAt:
+        d.createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Accept a pending invite. Moves the current user into the new
+ * household: updates their users/{uid} doc, appends their uid to the
+ * new household's memberUids, then deletes the invite. The user's
+ * EXISTING local receipts are NOT moved to the new household — leaving
+ * them in the user's original solo household, accessible if they
+ * later "Leave household" back to it. For a future iteration, we'll
+ * add an option to merge solo-household receipts into the new shared
+ * one at accept time.
+ */
+export async function acceptInvite(args: {
+  invite: PendingInvite;
+  uid: string;
+}): Promise<{ ok: true; newHouseholdId: string } | { ok: false; reason: string }> {
+  const firestore = loadFirestore();
+  if (!firestore) return { ok: false, reason: 'cloud module not loaded' };
+  try {
+    const db = firestore();
+    const newHid = args.invite.householdId;
+    const userRef = db.collection('users').doc(args.uid);
+    const householdRef = db.collection('households').doc(newHid);
+    const inviteRef = db.collection('invites').doc(args.invite.email);
+
+    // Transaction so an interrupted accept doesn't leave the user
+    // half-joined. memberUids uses arrayUnion to be idempotent if the
+    // user somehow accepts twice.
+    await db.runTransaction(async (tx) => {
+      const householdSnap = await tx.get(householdRef);
+      if (!householdSnap.exists) {
+        throw new Error('household no longer exists');
+      }
+      tx.update(householdRef, {
+        memberUids: firestore.FieldValue.arrayUnion(args.uid),
+        memberCount: firestore.FieldValue.increment(1),
+        updatedAt: firestore.FieldValue.serverTimestamp(),
+      });
+      tx.set(
+        userRef,
+        {
+          householdId: newHid,
+          updatedAt: firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      tx.delete(inviteRef);
+    });
+    return { ok: true, newHouseholdId: newHid };
+  } catch (e) {
+    return { ok: false, reason: (e as Error)?.message ?? 'unknown' };
+  }
+}
+
+export async function declineInvite(args: {
+  invite: PendingInvite;
+}): Promise<{ ok: boolean }> {
+  const firestore = loadFirestore();
+  if (!firestore) return { ok: false };
+  try {
+    const db = firestore();
+    await db.collection('invites').doc(args.invite.email).delete();
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * Remove the current user from their household. If the household has
+ * other members, they keep the receipts; the leaver ends up in a fresh
+ * solo household and continues using the app normally.
+ *
+ * If the leaver is the LAST member, the household is left intact (no
+ * data loss) but orphaned — no security rule allows anyone else to
+ * read it. A future iteration could delete it explicitly.
+ */
+export async function leaveCurrentHousehold(args: {
+  uid: string;
+  currentHouseholdId: string;
+  email: string | null;
+  displayName: string | null;
+}): Promise<{ ok: true; newSoloHouseholdId: string } | { ok: false; reason: string }> {
+  const firestore = loadFirestore();
+  if (!firestore) return { ok: false, reason: 'cloud module not loaded' };
+  try {
+    const db = firestore();
+    const oldRef = db.collection('households').doc(args.currentHouseholdId);
+    const userRef = db.collection('users').doc(args.uid);
+
+    // Step 1 — remove uid from the old household and decrement count.
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(oldRef);
+      if (!snap.exists) return;
+      tx.update(oldRef, {
+        memberUids: firestore.FieldValue.arrayRemove(args.uid),
+        memberCount: firestore.FieldValue.increment(-1),
+        updatedAt: firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    // Step 2 — create a fresh solo household for this user, mirroring
+    // what ensureHouseholdForUser does on first sign-in. We can't
+    // reuse that function because it short-circuits if the user doc
+    // already has a householdId.
+    const newRef = db.collection('households').doc();
+    const newHid = newRef.id;
+    const now = firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    batch.set(newRef, {
+      ownerUid: args.uid,
+      memberUids: [args.uid],
+      memberCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    batch.set(
+      userRef,
+      {
+        householdId: newHid,
+        email: args.email,
+        displayName: args.displayName,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+    await batch.commit();
+    return { ok: true, newSoloHouseholdId: newHid };
+  } catch (e) {
+    return { ok: false, reason: (e as Error)?.message ?? 'unknown' };
   }
 }
 

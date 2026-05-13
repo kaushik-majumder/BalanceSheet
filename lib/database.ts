@@ -793,3 +793,110 @@ export async function setReceiptPhotoUrl(
     [photoUrl, receiptId, uid],
   );
 }
+
+// ─── cloud→local mirror helpers (Phase 3 listener) ───────────────────────
+//
+// Called by lib/cloudSync.ts's receipts subscription whenever Firestore
+// reports a change from any device in the household. These paths are
+// LOCAL-ONLY — they intentionally do NOT trigger the shadow-write back to
+// cloud, since the data is ALREADY in cloud (that's what we just saw).
+// Doing so would create an idle write-amplification loop and make the
+// SQLite row's updated_at march forward on every snapshot for no reason.
+
+type CloudReceiptShape = {
+  id: string;
+  storeName: string;
+  date: string;
+  totalAmount: number;
+  subtotalAmount?: number | null;
+  taxAmount?: number | null;
+  category: string;
+  categoryTags?: string[];
+  rawText?: string | null;
+  imageUri?: string | null;
+  photoUrl?: string | null;
+  notes?: string | null;
+  lineItems?: Array<{
+    id: string;
+    name: string;
+    amount: number;
+    category?: string | null;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function upsertReceiptFromCloud(
+  cloud: CloudReceiptShape,
+  uid: string,
+): Promise<void> {
+  // We accept uid explicitly because the listener fires regardless of
+  // currentUserId — e.g. it might still be processing a snapshot batch
+  // mid-sign-out. The uid is stamped from whichever household member
+  // wrote the doc, which is fine because every member shares the row.
+  const tagsJson = cloud.categoryTags
+    ? JSON.stringify(cloud.categoryTags)
+    : null;
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `INSERT INTO receipts
+         (id, store_name, date, total_amount, subtotal_amount, tax_amount,
+          category, category_tags, raw_text, image_uri, photo_url, notes,
+          created_at, updated_at, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         store_name      = excluded.store_name,
+         date            = excluded.date,
+         total_amount    = excluded.total_amount,
+         subtotal_amount = excluded.subtotal_amount,
+         tax_amount      = excluded.tax_amount,
+         category        = excluded.category,
+         category_tags   = excluded.category_tags,
+         raw_text        = excluded.raw_text,
+         image_uri       = excluded.image_uri,
+         photo_url       = excluded.photo_url,
+         notes           = excluded.notes,
+         updated_at      = excluded.updated_at,
+         user_id         = excluded.user_id`,
+      [
+        cloud.id,
+        cloud.storeName,
+        cloud.date,
+        cloud.totalAmount,
+        cloud.subtotalAmount ?? null,
+        cloud.taxAmount ?? null,
+        cloud.category,
+        tagsJson,
+        cloud.rawText ?? null,
+        cloud.imageUri ?? null,
+        cloud.photoUrl ?? null,
+        cloud.notes ?? null,
+        cloud.createdAt,
+        cloud.updatedAt,
+        uid,
+      ],
+    );
+    // Wipe + re-insert line items so the local set always matches the
+    // cloud doc exactly. Simpler than diffing — and the row count per
+    // receipt is small (typically <30).
+    await db.runAsync(`DELETE FROM line_items WHERE receipt_id = ?`, [cloud.id]);
+    for (const it of cloud.lineItems ?? []) {
+      await db.runAsync(
+        `INSERT INTO line_items (id, receipt_id, name, amount, category) VALUES (?, ?, ?, ?, ?)`,
+        [it.id, cloud.id, it.name, it.amount, it.category ?? null],
+      );
+    }
+  });
+}
+
+export async function deleteReceiptLocally(
+  receiptId: string,
+  uid: string,
+): Promise<void> {
+  // Scope the delete by uid so a malformed listener payload can't wipe
+  // another user's receipt on this same device.
+  await db.runAsync(`DELETE FROM receipts WHERE id=? AND user_id=?`, [
+    receiptId,
+    uid,
+  ]);
+}

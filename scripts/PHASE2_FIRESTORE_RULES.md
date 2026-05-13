@@ -72,6 +72,31 @@ service cloud.firestore {
           && request.auth.uid in get(/databases/$(database)/documents/households/$(hid)).data.memberUids;
       }
     }
+
+    // Phase 3 — invites. Top-level collection keyed by lowercased
+    // email. The signed-in user can read THEIR OWN invite (where the
+    // doc id equals their auth email), accept it (delete on accept
+    // is wrapped in the same transaction that updates the household),
+    // or decline (delete). An existing household member can CREATE an
+    // invite as long as they're a member of the household they're
+    // inviting into.
+    match /invites/{email} {
+      allow read: if request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() == email;
+      allow create: if request.auth != null
+        && request.auth.uid in get(
+          /databases/$(database)/documents/households/$(request.resource.data.householdId)
+        ).data.memberUids;
+      allow delete: if request.auth != null && (
+        (request.auth.token.email != null
+          && request.auth.token.email.lower() == email)
+        || request.auth.uid == resource.data.invitedByUid
+      );
+      // Updates are not needed by the app — every "change of mind"
+      // path deletes the doc and re-creates if necessary.
+      allow update: if false;
+    }
   }
 }
 ```
