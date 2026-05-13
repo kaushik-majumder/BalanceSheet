@@ -12,7 +12,7 @@ import {
   signOutEverywhere,
 } from './auth';
 import { Profile, getProfile, deleteProfile } from './profile';
-import { deleteAllReceipts } from './database';
+import { deleteAllReceipts, setCurrentUserId } from './database';
 import {
   getBiometricAsked,
   getBiometricEnabled,
@@ -114,6 +114,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(u);
       if (!u) setBiometricUnlocked(false);
       setInitializing(false);
+      // Push the new uid into the database layer so every read/write
+      // it performs filters by the right user. Awaiting isn't useful
+      // here — the backfill runs in the background and the user
+      // doesn't see DB queries fire until a downstream screen mounts
+      // (which is well after the next tick).
+      setCurrentUserId(u?.uid ?? null).catch(() => {
+        // setCurrentUserId is intentionally tolerant of pre-migration
+        // schemas; any error here is non-fatal.
+      });
     });
     return unsub;
   }, []);

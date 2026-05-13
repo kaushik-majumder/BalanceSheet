@@ -3,6 +3,76 @@ import { Receipt, LineItem } from '../types';
 
 const db = SQLite.openDatabaseSync('receipts.db');
 
+// ─── per-user scoping ──────────────────────────────────────────────────────
+//
+// Receipts, line items, and correction history are scoped to the currently
+// authenticated user. We hold the uid as a module-level value that the
+// AuthContext sets whenever Firebase fires onAuthStateChanged. Database
+// functions that mutate or read user data require it to be non-null and
+// stamp every INSERT / filter every SELECT with it.
+//
+// Why a module global instead of passing uid through every call site:
+// the alternative is to thread uid into the 30+ database read/write paths
+// (and into every callback in every screen). The module-global pattern
+// keeps existing call sites unchanged — only the wiring at the AuthContext
+// boundary moves. It's safe in single-threaded RN JS where there's exactly
+// one current user at a time.
+
+let currentUserId: string | null = null;
+
+/**
+ * Set or clear the currently authenticated user. Called by AuthContext
+ * on every auth state change. Passing `null` (e.g. on sign-out) puts
+ * the database layer into a defensive mode where read/write ops throw
+ * rather than silently expose another user's data.
+ *
+ * When called with a non-null uid AFTER a schema upgrade, this also
+ * stamps any rows that pre-dated the user_id column with the current
+ * uid. The stamp is idempotent — it only touches rows where user_id
+ * is NULL, which can only happen once per device per migration.
+ */
+export async function setCurrentUserId(uid: string | null): Promise<void> {
+  currentUserId = uid;
+  if (uid) {
+    await backfillUnscopedRows(uid);
+  }
+}
+
+export function getCurrentUserId(): string | null {
+  return currentUserId;
+}
+
+function requireUserId(op: string): string {
+  if (!currentUserId) {
+    throw new Error(
+      `No authenticated user (op: ${op}). Sign in before calling user-scoped database operations.`,
+    );
+  }
+  return currentUserId;
+}
+
+async function backfillUnscopedRows(uid: string): Promise<void> {
+  // Stamps any pre-migration rows (user_id IS NULL) with the current
+  // user's uid. On a device that has only ever been used by one user,
+  // this correctly attributes their existing receipts to them. On a
+  // device that gets a second user signing in BEFORE the first user
+  // ever launched the upgraded app, both share the unscoped rows —
+  // realistically an edge case (multi-user-on-same-device wasn't
+  // supported by the old app), and the first-signed-in user wins.
+  try {
+    await db.runAsync(`UPDATE receipts SET user_id = ? WHERE user_id IS NULL`, [
+      uid,
+    ]);
+    await db.runAsync(
+      `UPDATE receipt_corrections SET user_id = ? WHERE user_id IS NULL`,
+      [uid],
+    );
+  } catch {
+    // The columns may not exist yet on a fresh install where init has
+    // not yet run; that's fine, there are no rows to backfill either.
+  }
+}
+
 export async function initDatabase(): Promise<void> {
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
@@ -57,12 +127,32 @@ export async function initDatabase(): Promise<void> {
     `ALTER TABLE receipts    ADD COLUMN tax_amount       REAL`,
     `ALTER TABLE receipts    ADD COLUMN category_tags    TEXT`,
     `ALTER TABLE line_items  ADD COLUMN category         TEXT`,
+    // Per-user scoping. Nullable on existing rows; backfilled with
+    // the current uid by setCurrentUserId() on the first sign-in
+    // after the schema migration.
+    `ALTER TABLE receipts             ADD COLUMN user_id  TEXT`,
+    `ALTER TABLE receipt_corrections  ADD COLUMN user_id  TEXT`,
   ]) {
     try {
       await db.execAsync(sql);
     } catch {
       // column already exists
     }
+  }
+
+  // Filtering index for the user-scoped lookups. Most read paths
+  // (getAllReceipts, getReceiptsByMonth, searchReceipts) filter by
+  // user_id; adding it ahead of an existing index keeps date-sorted
+  // scans inside the user partition fast even when the table grows.
+  try {
+    await db.execAsync(
+      `CREATE INDEX IF NOT EXISTS idx_receipts_user      ON receipts(user_id);
+       CREATE INDEX IF NOT EXISTS idx_receipts_user_date ON receipts(user_id, date);
+       CREATE INDEX IF NOT EXISTS idx_corrections_user_store
+         ON receipt_corrections(user_id, store_name);`,
+    );
+  } catch {
+    // Indices on a not-yet-migrated table — safe to ignore.
   }
 
   // Cache for the async classifier — keyed by the cleaned, lowercased item
@@ -172,6 +262,7 @@ export async function saveCorrection(input: {
   rawOcr: string;
   items: import('../types').LineItem[];
 }): Promise<void> {
+  const uid = requireUserId('saveCorrection');
   const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const storeKey = input.storeName.trim().toLowerCase();
   if (!storeKey) return;
@@ -187,23 +278,26 @@ export async function saveCorrection(input: {
   );
   await db.withTransactionAsync(async () => {
     await db.runAsync(
-      `INSERT INTO receipt_corrections (id, store_name, raw_ocr, items_json, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [id, storeKey, truncatedOcr, itemsJson, new Date().toISOString()],
+      `INSERT INTO receipt_corrections (id, store_name, raw_ocr, items_json, created_at, user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, storeKey, truncatedOcr, itemsJson, new Date().toISOString(), uid],
     );
     // Keep the table bounded — only the 10 most recent corrections per
-    // store. Older ones get pruned. A user with 100 stores ends up
-    // with at most 1000 rows total, which is tiny.
+    // store FOR THIS USER. A user with 100 stores ends up with at most
+    // 1000 rows; multiplied across users this stays well under any
+    // realistic device-storage concern.
     await db.runAsync(
       `DELETE FROM receipt_corrections
        WHERE store_name = ?
+         AND user_id    = ?
          AND id NOT IN (
            SELECT id FROM receipt_corrections
            WHERE store_name = ?
+             AND user_id    = ?
            ORDER BY created_at DESC
            LIMIT 10
          )`,
-      [storeKey, storeKey],
+      [storeKey, uid, storeKey, uid],
     );
   });
 }
@@ -218,6 +312,7 @@ export async function getRelevantCorrections(
     createdAt: string;
   }>
 > {
+  const uid = requireUserId('getRelevantCorrections');
   const storeKey = storeName.trim().toLowerCase();
   if (!storeKey) return [];
   const rows = await db.getAllAsync<{
@@ -228,9 +323,10 @@ export async function getRelevantCorrections(
     `SELECT raw_ocr, items_json, created_at
      FROM receipt_corrections
      WHERE store_name = ?
+       AND user_id    = ?
      ORDER BY created_at DESC
      LIMIT ?`,
-    [storeKey, limit],
+    [storeKey, uid, limit],
   );
   const out: Array<{
     rawOcr: string;
@@ -280,9 +376,16 @@ export async function updateLineItemCategory(
   itemId: string,
   category: string,
 ): Promise<void> {
+  const uid = requireUserId('updateLineItemCategory');
+  // Defense-in-depth: only update items whose parent receipt belongs to
+  // the current user. Prevents a stale item id (or a malicious caller)
+  // from reaching across user boundaries.
   await db.runAsync(
-    `UPDATE line_items SET category=? WHERE id=?`,
-    [category, itemId],
+    `UPDATE line_items
+     SET category = ?
+     WHERE id = ?
+       AND receipt_id IN (SELECT id FROM receipts WHERE user_id = ?)`,
+    [category, itemId, uid],
   );
 }
 
@@ -296,6 +399,16 @@ export async function replaceLineItems(
   receiptId: string,
   items: import('../types').LineItem[],
 ): Promise<void> {
+  const uid = requireUserId('replaceLineItems');
+  // Verify the receipt belongs to the current user before mutating
+  // its line items. If a stale receipt id leaks from a previous user's
+  // session (e.g. via React state that wasn't cleared), the lookup
+  // returns no row and we leave the data alone.
+  const ownedRow = await db.getFirstAsync<{ id: string }>(
+    `SELECT id FROM receipts WHERE id = ? AND user_id = ?`,
+    [receiptId, uid],
+  );
+  if (!ownedRow) return;
   await db.withTransactionAsync(async () => {
     await db.runAsync(`DELETE FROM line_items WHERE receipt_id=?`, [receiptId]);
     for (const item of items) {
@@ -305,15 +418,32 @@ export async function replaceLineItems(
       );
     }
     // Bump the receipt's updated_at so list views know to re-render.
-    await db.runAsync(`UPDATE receipts SET updated_at=? WHERE id=?`, [
-      new Date().toISOString(),
-      receiptId,
-    ]);
+    await db.runAsync(
+      `UPDATE receipts SET updated_at=? WHERE id=? AND user_id=?`,
+      [new Date().toISOString(), receiptId, uid],
+    );
   });
 }
 
+/**
+ * Deletes every receipt belonging to the CURRENTLY SIGNED-IN user.
+ * Used by the deleteAccount flow. Other users' data on the same
+ * device is untouched.
+ */
 export async function deleteAllReceipts(): Promise<void> {
-  await db.execAsync(`DELETE FROM line_items; DELETE FROM receipts;`);
+  const uid = requireUserId('deleteAllReceipts');
+  await db.withTransactionAsync(async () => {
+    // line_items cascade-delete via the FK once their parent receipts
+    // are removed, but be explicit so we're not relying on PRAGMA
+    // foreign_keys=ON being honoured by every SQLite build.
+    await db.runAsync(
+      `DELETE FROM line_items
+       WHERE receipt_id IN (SELECT id FROM receipts WHERE user_id = ?)`,
+      [uid],
+    );
+    await db.runAsync(`DELETE FROM receipts WHERE user_id = ?`, [uid]);
+    await db.runAsync(`DELETE FROM receipt_corrections WHERE user_id = ?`, [uid]);
+  });
 }
 
 export interface ProfileRow {
@@ -362,13 +492,14 @@ export async function deleteProfileRow(uid: string): Promise<void> {
 }
 
 export async function saveReceipt(receipt: Receipt): Promise<void> {
+  const uid = requireUserId('saveReceipt');
   const tagsJson = serializeTags(receipt.categoryTags);
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       `INSERT INTO receipts
          (id, store_name, date, total_amount, subtotal_amount, tax_amount,
-          category, category_tags, raw_text, image_uri, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          category, category_tags, raw_text, image_uri, notes, created_at, updated_at, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         receipt.id,
         receipt.storeName,
@@ -383,6 +514,7 @@ export async function saveReceipt(receipt: Receipt): Promise<void> {
         receipt.notes ?? null,
         receipt.createdAt,
         receipt.updatedAt,
+        uid,
       ],
     );
 
@@ -396,12 +528,13 @@ export async function saveReceipt(receipt: Receipt): Promise<void> {
 }
 
 export async function updateReceipt(receipt: Receipt): Promise<void> {
+  const uid = requireUserId('updateReceipt');
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       `UPDATE receipts
        SET store_name=?, date=?, total_amount=?, subtotal_amount=?, tax_amount=?,
            category=?, category_tags=?, notes=?, updated_at=?
-       WHERE id=?`,
+       WHERE id=? AND user_id=?`,
       [
         receipt.storeName,
         receipt.date,
@@ -413,14 +546,22 @@ export async function updateReceipt(receipt: Receipt): Promise<void> {
         receipt.notes ?? null,
         new Date().toISOString(),
         receipt.id,
+        uid,
       ],
     );
 
     // Replace line items if the caller provided a new list. Caller can
     // omit `lineItems` to leave them unchanged (the previous behavior
-    // that the dashboard relied on for non-item edits).
+    // that the dashboard relied on for non-item edits). Scope the
+    // delete via the receipts table so a stale id from another user's
+    // session can never wipe their items.
     if (receipt.lineItems !== undefined) {
-      await db.runAsync(`DELETE FROM line_items WHERE receipt_id=?`, [receipt.id]);
+      await db.runAsync(
+        `DELETE FROM line_items
+         WHERE receipt_id = ?
+           AND receipt_id IN (SELECT id FROM receipts WHERE user_id = ?)`,
+        [receipt.id, uid],
+      );
       for (const item of receipt.lineItems) {
         await db.runAsync(
           `INSERT INTO line_items (id, receipt_id, name, amount, category) VALUES (?, ?, ?, ?, ?)`,
@@ -450,38 +591,52 @@ function parseTags(raw: string | null, fallbackCategory: string): string[] {
 }
 
 export async function deleteReceipt(id: string): Promise<void> {
-  await db.runAsync(`DELETE FROM receipts WHERE id=?`, [id]);
+  const uid = requireUserId('deleteReceipt');
+  await db.runAsync(`DELETE FROM receipts WHERE id=? AND user_id=?`, [id, uid]);
 }
 
 export async function getAllReceipts(): Promise<Receipt[]> {
-  const rows = await db.getAllAsync<RawRow>(`SELECT * FROM receipts ORDER BY date DESC`);
+  const uid = requireUserId('getAllReceipts');
+  const rows = await db.getAllAsync<RawRow>(
+    `SELECT * FROM receipts WHERE user_id=? ORDER BY date DESC`,
+    [uid],
+  );
   return await attachLineItems(rows);
 }
 
 export async function getReceiptById(id: string): Promise<Receipt | null> {
-  const row = await db.getFirstAsync<RawRow>(`SELECT * FROM receipts WHERE id=?`, [id]);
+  const uid = requireUserId('getReceiptById');
+  const row = await db.getFirstAsync<RawRow>(
+    `SELECT * FROM receipts WHERE id=? AND user_id=?`,
+    [id, uid],
+  );
   if (!row) return null;
   const [withItems] = await attachLineItems([row]);
   return withItems ?? rowToReceipt(row);
 }
 
 export async function getReceiptsByMonth(year: number, month: number): Promise<Receipt[]> {
+  const uid = requireUserId('getReceiptsByMonth');
   const start = new Date(year, month - 1, 1).toISOString();
   const end   = new Date(year, month, 0, 23, 59, 59).toISOString();
   const rows  = await db.getAllAsync<RawRow>(
-    `SELECT * FROM receipts WHERE date >= ? AND date <= ? ORDER BY date DESC`,
-    [start, end],
+    `SELECT * FROM receipts
+     WHERE user_id = ? AND date >= ? AND date <= ?
+     ORDER BY date DESC`,
+    [uid, start, end],
   );
   return await attachLineItems(rows);
 }
 
 export async function searchReceipts(query: string): Promise<Receipt[]> {
+  const uid = requireUserId('searchReceipts');
   const q = `%${query.toLowerCase()}%`;
   const rows = await db.getAllAsync<RawRow>(
     `SELECT * FROM receipts
-     WHERE lower(store_name) LIKE ? OR lower(category) LIKE ? OR lower(notes) LIKE ?
+     WHERE user_id = ?
+       AND (lower(store_name) LIKE ? OR lower(category) LIKE ? OR lower(notes) LIKE ?)
      ORDER BY date DESC`,
-    [q, q, q],
+    [uid, q, q, q],
   );
   return await attachLineItems(rows);
 }
