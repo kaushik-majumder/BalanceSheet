@@ -75,6 +75,57 @@ export function isCloudSyncAvailable(): boolean {
   return loadFirestore() != null;
 }
 
+// ─── diagnostics (visible in Settings) ────────────────────────────────────
+//
+// Phase 2 cloud sync runs entirely in the background — local writes always
+// succeed regardless of whether the cloud half landed. That's the right
+// default for resilience but it makes debugging an empty Firestore very
+// hard ("did it try? did it fail? did it never fire?"). Track every
+// important step in a module-level snapshot the UI can render.
+
+export type CloudSyncDiagnostics = {
+  moduleAvailable: boolean;
+  storageAvailable: boolean;
+  householdId: string | null;
+  lastBootstrap: { ok: boolean; at: string; message?: string } | null;
+  lastReceiptSync: { ok: boolean; at: string; message?: string; receiptId?: string } | null;
+  lastMigration: { migrated: number; failed: number; skipped: boolean; at: string } | null;
+};
+
+let diagnostics: CloudSyncDiagnostics = {
+  moduleAvailable: false,
+  storageAvailable: false,
+  householdId: null,
+  lastBootstrap: null,
+  lastReceiptSync: null,
+  lastMigration: null,
+};
+
+const listeners = new Set<() => void>();
+
+export function getCloudSyncDiagnostics(): CloudSyncDiagnostics {
+  // Recompute the module-availability flags on read so the panel reflects
+  // the current state even if a downstream consumer triggered the load
+  // path elsewhere.
+  return {
+    ...diagnostics,
+    moduleAvailable: loadFirestore() != null,
+    storageAvailable: loadStorage() != null,
+  };
+}
+
+export function subscribeCloudSyncDiagnostics(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+}
+
+function patchDiagnostics(p: Partial<CloudSyncDiagnostics>): void {
+  diagnostics = { ...diagnostics, ...p };
+  for (const fn of listeners) fn();
+}
+
 // ─── household bootstrap ───────────────────────────────────────────────────
 
 /**
@@ -92,13 +143,32 @@ export async function ensureHouseholdForUser(args: {
   displayName?: string | null;
 }): Promise<string | null> {
   const firestore = loadFirestore();
-  if (!firestore) return null;
+  if (!firestore) {
+    patchDiagnostics({
+      lastBootstrap: {
+        ok: false,
+        at: new Date().toISOString(),
+        message:
+          '@react-native-firebase/firestore native module not loaded. Reinstall a Phase-2 APK or rebuild.',
+      },
+    });
+    return null;
+  }
   try {
     const db = firestore();
     const userRef = db.collection('users').doc(args.uid);
     const userSnap = await userRef.get();
     if (userSnap.exists && userSnap.data()?.householdId) {
-      return userSnap.data()!.householdId as string;
+      const existingHid = userSnap.data()!.householdId as string;
+      patchDiagnostics({
+        householdId: existingHid,
+        lastBootstrap: {
+          ok: true,
+          at: new Date().toISOString(),
+          message: 'existing household',
+        },
+      });
+      return existingHid;
     }
 
     // Create a fresh solo household. Doc id is auto-generated so
@@ -130,11 +200,26 @@ export async function ensureHouseholdForUser(args: {
       joinedAt: now,
     });
     await batch.commit();
+    patchDiagnostics({
+      householdId: hid,
+      lastBootstrap: {
+        ok: true,
+        at: new Date().toISOString(),
+        message: 'new household created',
+      },
+    });
     return hid;
-  } catch {
+  } catch (e) {
     // Firestore not enabled in the console yet, network down, or
     // permissions denied. Cloud features just silently no-op until
     // the next attempt — local data is unaffected.
+    patchDiagnostics({
+      lastBootstrap: {
+        ok: false,
+        at: new Date().toISOString(),
+        message: (e as Error)?.message ?? 'unknown',
+      },
+    });
     return null;
   }
 }
@@ -155,7 +240,17 @@ export async function syncReceiptToCloud(
   householdId: string,
 ): Promise<void> {
   const firestore = loadFirestore();
-  if (!firestore || !householdId) return;
+  if (!firestore || !householdId) {
+    patchDiagnostics({
+      lastReceiptSync: {
+        ok: false,
+        at: new Date().toISOString(),
+        receiptId: receipt.id,
+        message: !firestore ? 'firestore module not loaded' : 'no household id set',
+      },
+    });
+    return;
+  }
   try {
     // If the receipt has a local image and no cloud URL yet, push the
     // photo to Cloud Storage first so the Firestore doc lands with
@@ -196,10 +291,25 @@ export async function syncReceiptToCloud(
       .collection('receipts')
       .doc(receipt.id);
     await ref.set(payload);
+    patchDiagnostics({
+      lastReceiptSync: {
+        ok: true,
+        at: new Date().toISOString(),
+        receiptId: receipt.id,
+      },
+    });
   } catch (e) {
     // Log but don't throw — the local write already succeeded.
     // eslint-disable-next-line no-console
     console.warn('[cloudSync] syncReceiptToCloud failed:', (e as Error)?.message);
+    patchDiagnostics({
+      lastReceiptSync: {
+        ok: false,
+        at: new Date().toISOString(),
+        receiptId: receipt.id,
+        message: (e as Error)?.message ?? 'unknown',
+      },
+    });
   }
 }
 
@@ -329,6 +439,14 @@ export async function migrateLocalReceiptsToCloud(args: {
     // eslint-disable-next-line no-console
     console.warn('[cloudSync] migrateLocalReceiptsToCloud failed:', (e as Error)?.message);
   }
+  patchDiagnostics({
+    lastMigration: {
+      migrated,
+      failed,
+      skipped: false,
+      at: new Date().toISOString(),
+    },
+  });
   return { migrated, failed, skipped: false };
 }
 
