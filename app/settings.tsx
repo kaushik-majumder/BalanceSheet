@@ -775,55 +775,75 @@ function FamilyPanel() {
   }
   return (
     <View style={{ gap: 8 }}>
-      {members.map((m) => (
-        <View
-          key={m.uid}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 10,
-            paddingVertical: 6,
-          }}
-        >
-          <Ionicons
-            name={m.isYou ? 'person-circle' : 'person-circle-outline'}
-            size={28}
-            color={m.isYou ? theme.colors.primary : theme.colors.textSecondary}
-          />
-          <View style={{ flex: 1 }}>
-            <Text
-              style={{
-                color: theme.colors.textPrimary,
-                fontSize: theme.font.md,
-                fontWeight: '600',
-              }}
-              numberOfLines={1}
-            >
-              {m.displayName ?? m.email ?? m.uid.slice(0, 8)}
-              {m.isYou ? '  (you)' : ''}
-            </Text>
-            {m.email && m.email !== m.displayName ? (
+      {members.map((m) => {
+        // For the signed-in user, prefer the live Firebase Auth name/
+        // email (always current) over whatever's stored on the
+        // Firestore user doc (refreshed on bootstrap, but could be
+        // stale or null for older accounts).
+        const livePrimary = m.isYou
+          ? user?.displayName ?? m.displayName ?? null
+          : m.displayName ?? null;
+        const liveEmail = m.isYou
+          ? user?.email ?? m.email ?? null
+          : m.email ?? null;
+        const headline =
+          livePrimary && livePrimary.trim()
+            ? livePrimary
+            : liveEmail && liveEmail.trim()
+              ? liveEmail
+              : 'Family member';
+        const subtitle =
+          liveEmail && liveEmail !== headline ? liveEmail : null;
+        return (
+          <View
+            key={m.uid}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              paddingVertical: 6,
+            }}
+          >
+            <Ionicons
+              name={m.isYou ? 'person-circle' : 'person-circle-outline'}
+              size={28}
+              color={m.isYou ? theme.colors.primary : theme.colors.textSecondary}
+            />
+            <View style={{ flex: 1 }}>
               <Text
-                style={{ color: theme.colors.textMuted, fontSize: theme.font.xs }}
+                style={{
+                  color: theme.colors.textPrimary,
+                  fontSize: theme.font.md,
+                  fontWeight: '600',
+                }}
                 numberOfLines={1}
               >
-                {m.email}
+                {headline}
+                {m.isYou ? '  (you)' : ''}
+              </Text>
+              {subtitle ? (
+                <Text
+                  style={{ color: theme.colors.textMuted, fontSize: theme.font.xs }}
+                  numberOfLines={1}
+                >
+                  {subtitle}
+                </Text>
+              ) : null}
+            </View>
+            {m.role === 'owner' ? (
+              <Text
+                style={{
+                  color: theme.colors.primary,
+                  fontSize: theme.font.xs,
+                  fontWeight: '600',
+                }}
+              >
+                Owner
               </Text>
             ) : null}
           </View>
-          {m.role === 'owner' ? (
-            <Text
-              style={{
-                color: theme.colors.primary,
-                fontSize: theme.font.xs,
-                fontWeight: '600',
-              }}
-            >
-              Owner
-            </Text>
-          ) : null}
-        </View>
-      ))}
+        );
+      })}
 
       {showInviteInput ? (
         <View style={{ gap: 8, marginTop: 4 }}>
