@@ -177,9 +177,17 @@ export async function ensureHouseholdForUser(args: {
     const hid = hidRef.id;
     const now = firestore.FieldValue.serverTimestamp();
 
-    // Use a single batched write so the user, household, and member
-    // docs all land atomically — partial state would leave the app
-    // referencing a household that doesn't exist.
+    // Two batched writes — the user and the household. The members
+    // subcollection is intentionally NOT written here: its security
+    // rule looks up the parent household via get(), which returns
+    // nothing during a batched create (rules see pre-batch state),
+    // so the batch would fail with permission-denied on the members
+    // doc. The `memberUids` array on the household doc is what every
+    // real-life rule checks against; the members subcollection is
+    // future Phase-3 territory for richer per-member metadata
+    // (joinedAt, role transitions, etc.). When we add it then, we'll
+    // write each members/{uid} doc AFTER the household already
+    // exists, where the get() succeeds.
     const batch = db.batch();
     batch.set(userRef, {
       householdId: hid,
@@ -194,10 +202,6 @@ export async function ensureHouseholdForUser(args: {
       memberCount: 1,
       createdAt: now,
       updatedAt: now,
-    });
-    batch.set(hidRef.collection('members').doc(args.uid), {
-      role: 'owner',
-      joinedAt: now,
     });
     await batch.commit();
     patchDiagnostics({
