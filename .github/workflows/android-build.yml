@@ -26,7 +26,14 @@ on:
           - development
   push:
     branches:
+      # `main` is the canonical source of APKs — every merge into main
+      # produces a build artifact that's ready to install. Feature/fix
+      # branches still trigger builds for quick verification before
+      # merge, but the install-on-device APK should always come from
+      # a main-branch run.
+      - main
       - 'feature/**'
+      - 'fix/**'
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
