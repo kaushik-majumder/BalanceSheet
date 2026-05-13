@@ -1145,6 +1145,16 @@ export default function ScanScreen() {
       <ItemEditModal
         item={editingItem}
         extraTags={categoryTags}
+        onAddCustomTag={(tag) => {
+          // Mirror the edit-receipt screen: a tag added from the per-
+          // item picker propagates to the receipt-level tags so all
+          // items on this receipt see it.
+          setCategoryTags((prev) =>
+            prev.some((t) => t.toLowerCase() === tag.toLowerCase())
+              ? prev
+              : [...prev, tag],
+          );
+        }}
         onClose={() => setEditingItem(null)}
         onSave={saveEditedItem}
         onDelete={deleteItem}
