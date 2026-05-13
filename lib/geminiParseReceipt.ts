@@ -106,6 +106,37 @@ Correct items:
     { "name": "KS ORG EGGS",  "amount": 12.49, "category": "Groceries" }
 (EKO MIRROR uses the custom "Home Decor" tag (the receipt has TWO categoryTags so each item picks the one it belongs to). The TPD/1993379 line is the markdown for SKU 1993379. Net = 69.99 − 15.00 = 54.99. Emit ONE line per product at the net price; do NOT emit the TPD line as a separate item.)
 
+EXAMPLE 3 — Grocery receipt with embedded discount + unused multi-buy deals:
+OCR fragment:
+    Bingo Tedhe Meche Masala     $1.49 P
+    80g
+    3 For $4
+    Pvs Calcutta Paan 250g
+       2 @ $3.99                $7.98
+            Pvs Mukhwas 250 G   -$2.98
+    Rajnigandha Silver Pearls   $3.99 P
+    Pvs Coriander Seeds 200g    $3.49
+    Kur Masala Munch 100g       $1.49 P
+    3 For $4.00
+    Uncle Chips Spicy Treat 60g $1.49 P
+    2 For $1.00
+    Fresh Roti Jumbo 10pcs      $6.99 F
+Correct categoryTags: ["Groceries"]
+Correct items:
+    { "name": "Bingo Tedhe Meche Masala 80g",    "amount": 1.49, "category": "Groceries" }
+    { "name": "Pvs Calcutta Paan 250g",          "amount": 5.00, "category": "Groceries" }
+    { "name": "Rajnigandha Silver Pearls",       "amount": 3.99, "category": "Groceries" }
+    { "name": "Pvs Coriander Seeds 200g",        "amount": 3.49, "category": "Groceries" }
+    { "name": "Kur Masala Munch 100g",           "amount": 1.49, "category": "Groceries" }
+    { "name": "Uncle Chips Spicy Treat 60g",     "amount": 1.49, "category": "Groceries" }
+    { "name": "Fresh Roti Jumbo 10pcs",          "amount": 6.99, "category": "Groceries" }
+(CRITICAL behaviours, applied in this order:
+ 1. "X For $Y" promo qualifiers ("3 For $4", "3 For $4.00", "2 For $1.00") are MARKETING TEXT for an unused deal — the customer paid the PRINTED line price ($1.49 each), not the deal price. NEVER divide a deal price by the deal quantity. Skip these lines entirely.
+ 2. Weight/size sub-lines like "80g" attribute to the product directly above — fold the weight into the product name. Don't emit "80g" as its own item.
+ 3. "N @ $X.YZ $W.WW" lines (Calcutta's "2 @ $3.99 $7.98") are quantity-rate breakdowns: N units at $X.YZ each totals $W.WW. The product paid $W.WW, NOT $X.YZ.
+ 4. A negative-amount sub-line under a product ("Pvs Mukhwas 250 G -$2.98" indented under Calcutta) is a DISCOUNT attached to the parent product, not a separate item. Subtract it from the parent: 7.98 − 2.98 = 5.00. Do NOT emit the discount line as its own item.
+ 5. When you skip ANY line above, the REMAINING product names must stay paired with THEIR OWN row's price. Never shift names up to fill the gap a skipped line leaves in the price column.)
+
 Rules for FIELDS:
 - store: the merchant name, cleaned of OCR garbage characters and casing weirdness.
 - date: the transaction date printed on the receipt. ALWAYS look for it — most receipts have one near the top header, the bottom footer, or next to "Date:", "Trans:", "Order:". Format as YYYY-MM-DD. Recognize all of: "2025-08-31", "08/31/2025", "31/08/2025", "2025/08/31", "Aug 31, 2025", "31 Aug 2025". Only return an empty string if NO date appears anywhere on the receipt.

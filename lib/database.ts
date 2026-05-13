@@ -121,11 +121,19 @@ function fnv1aHash(s: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
+// Bump whenever the AI prompt / parsing logic changes so existing
+// cache entries (which may contain BAD parses from the old prompt)
+// no longer match. The shape of the cached payload is the same, but
+// changing the hash input forces a fresh AI call for previously-cached
+// OCRs and a clean re-cache under the new key.
+const CACHE_KEY_VERSION = 'v2';
+
 export function hashOcrText(rawOcr: string): string {
   // Normalize whitespace + case so trivially-different OCR runs of
-  // the same receipt hit the same cache key.
+  // the same receipt hit the same cache key. Prefix with the cache
+  // version so a prompt change invalidates stale entries.
   const normalized = rawOcr.toLowerCase().replace(/\s+/g, ' ').trim();
-  return fnv1aHash(normalized);
+  return fnv1aHash(`${CACHE_KEY_VERSION}|${normalized}`);
 }
 
 const GEMINI_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
