@@ -1,28 +1,25 @@
-import { NativeModules } from 'react-native';
 import { Receipt } from '../types';
 
 /**
  * PDF export for the Reports screen.
  *
- * Mirrors the defensive-loading pattern used by lib/haptics.ts — the
- * existing preview APK may not have expo-print linked yet (the OTA
- * ships JS only, not native modules), so we probe NativeModules
- * before requiring the JS shim. If the native module is absent the
- * caller falls back to CSV.
+ * expo-print uses the new Expo Modules API (requireNativeModule), so
+ * the native side is NOT registered on react-native's NativeModules
+ * global. Probing NativeModules.ExpoPrint always returned falsy, even
+ * on APKs that had the module linked — that's why earlier builds
+ * silently fell back to CSV.
  *
- * Activate by running a fresh APK build (GitHub Actions workflow);
- * until then PDF generation is silently a no-op and the share button
- * gives the user a CSV.
+ * Instead we lazy-require the JS shim inside a try/catch. On a build
+ * without the native side linked, importing 'expo-print' triggers a
+ * `requireNativeModule('ExpoPrint')` deep inside that throws — the
+ * catch sets the cached availability to null and the caller falls
+ * back to CSV. On a build with the native side linked, the require
+ * succeeds and we cache the loaded module.
+ *
+ * The check runs at most once per session (cached). Calling it has
+ * the side effect of resolving the module, so the subsequent
+ * generateReceiptsPdf() doesn't pay the require cost twice.
  */
-
-const PRINT_NATIVE_KEYS = ['ExpoPrint', 'ExponentPrint', 'RNPrint'];
-const PRINT_AVAILABLE: boolean =
-  !!NativeModules &&
-  PRINT_NATIVE_KEYS.some((k) => !!(NativeModules as Record<string, unknown>)[k]);
-
-export function isPdfExportAvailable(): boolean {
-  return PRINT_AVAILABLE;
-}
 
 type PrintModule = {
   printToFileAsync: (opts: {
@@ -33,22 +30,27 @@ type PrintModule = {
   }) => Promise<{ uri: string }>;
 };
 
-let mod: PrintModule | null | undefined;
+let cachedMod: PrintModule | null | undefined;
+
 function loadPrint(): PrintModule | null {
-  if (!PRINT_AVAILABLE) return null;
-  if (mod !== undefined) return mod;
+  if (cachedMod !== undefined) return cachedMod;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
     const candidate = require('expo-print') as Partial<PrintModule>;
-    if (!candidate?.printToFileAsync) {
-      mod = null;
+    if (candidate && typeof candidate.printToFileAsync === 'function') {
+      cachedMod = candidate as PrintModule;
     } else {
-      mod = candidate as PrintModule;
+      cachedMod = null;
     }
   } catch {
-    mod = null;
+    // Native module not linked in this APK — caller falls back to CSV.
+    cachedMod = null;
   }
-  return mod;
+  return cachedMod;
+}
+
+export function isPdfExportAvailable(): boolean {
+  return loadPrint() != null;
 }
 
 // ---------- HTML template ----------
