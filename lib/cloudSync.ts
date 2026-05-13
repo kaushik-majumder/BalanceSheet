@@ -160,6 +160,25 @@ export async function ensureHouseholdForUser(args: {
     const userSnap = await userRef.get();
     if (userSnap.exists && userSnap.data()?.householdId) {
       const existingHid = userSnap.data()!.householdId as string;
+      // Refresh email + displayName on every sign-in so the Family
+      // panel shows the latest values from Firebase Auth instead of
+      // whatever was on the user object at first bootstrap (often
+      // null on a freshly-created account). Merge so we don't blow
+      // away other future fields.
+      try {
+        await userRef.set(
+          {
+            email: args.email ?? null,
+            displayName: args.displayName ?? null,
+            updatedAt: firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      } catch {
+        // The refresh is a nice-to-have. If it fails (e.g. the user
+        // rule is mid-update), we still return the household id —
+        // the rest of the app proceeds normally.
+      }
       patchDiagnostics({
         householdId: existingHid,
         lastBootstrap: {
