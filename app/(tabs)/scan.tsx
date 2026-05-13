@@ -45,6 +45,7 @@ import { Card } from '../../components/ui/Card';
 import { CategoryTagsPicker } from '../../components/ui/CategoryTagsPicker';
 import { TagChip } from '../../components/ui/TagChip';
 import { ItemEditModal } from '../../components/receipt/ItemEditModal';
+import { checkItemsAgainstSubtotal } from '../../lib/itemsTotalCheck';
 
 type ScanState = 'idle' | 'processing' | 'review';
 
@@ -556,6 +557,30 @@ export default function ScanScreen() {
       return;
     }
 
+    // Final guardrail: if items still don't match the subtotal, give
+    // the user one last chance to fix it before persisting. They can
+    // confirm "Save anyway" if they've already cross-verified visually.
+    const subtotalForCheck = subtotal.trim()
+      ? parseFloat(subtotal.replace(',', '.'))
+      : null;
+    const mismatch = checkItemsAgainstSubtotal(items, subtotalForCheck);
+    if (!mismatch.ok) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        Alert.alert(
+          "Line items don't match the subtotal",
+          `${mismatch.hint}\n\nItems total: $${mismatch.sum.toFixed(
+            2,
+          )}\nReceipt subtotal: $${mismatch.subtotal.toFixed(2)}`,
+          [
+            { text: 'Review items', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Save anyway', onPress: () => resolve(true) },
+          ],
+          { cancelable: true, onDismiss: () => resolve(false) },
+        );
+      });
+      if (!confirmed) return;
+    }
+
     setSaving(true);
     try {
       const now = new Date().toISOString();
@@ -672,6 +697,31 @@ export default function ScanScreen() {
 
   // Apply a Gemini-validated receipt into the form state. Used from
   // both the live API path and the cache-hit path.
+  /**
+   * Compare the running line-item sum against the subtotal we
+   * extracted from the receipt and surface an alert if they don't
+   * agree within the rounding tolerance. We deliberately keep this
+   * as a notification (not an auto-fix) — the safe thing is to ask
+   * the user to verify, since silently editing the wrong row would
+   * be worse than leaving the mismatch visible.
+   */
+  const maybeWarnTotalMismatch = (
+    nextItems: LineItem[],
+    nextSubtotal?: number | null,
+  ) => {
+    const check = checkItemsAgainstSubtotal(nextItems, nextSubtotal);
+    if (check.ok) return;
+    Alert.alert(
+      "Line items don't match the subtotal",
+      `${check.hint}\n\nItems total: $${check.sum.toFixed(
+        2,
+      )}\nReceipt subtotal: $${check.subtotal.toFixed(
+        2,
+      )}\n\nPlease cross-verify the line items before saving.`,
+      [{ text: 'OK' }],
+    );
+  };
+
   const applyAiResult = (
     ai: import('../../lib/geminiParseReceipt').GeminiReceipt,
   ) => {
@@ -690,6 +740,11 @@ export default function ScanScreen() {
     else setTax('');
     setItems(ai.lineItems);
     setParserBaseline(ai.lineItems);
+    // Sanity-check: do the line items add up to the printed subtotal?
+    // A mismatch on a fresh parse usually means OCR dropped or
+    // duplicated a row, or the AI mis-attributed a discount. Surface
+    // it as a prompt so the user verifies before saving.
+    maybeWarnTotalMismatch(ai.lineItems, ai.subtotalAmount);
     const dominantCategory = pickDominantCategory(ai.lineItems);
     if (dominantCategory) setCategory(dominantCategory);
     if (ai.categoryTags && ai.categoryTags.length > 0) {

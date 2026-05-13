@@ -23,6 +23,7 @@ import {
   replaceLineItems,
 } from '../../lib/database';
 import { refineUncategorizedItems } from '../../lib/itemClassifier';
+import { checkItemsAgainstSubtotal } from '../../lib/itemsTotalCheck';
 import { parseYmdLocal } from '../../lib/parser';
 import { notifySuccess, tapLight, tapMedium } from '../../lib/haptics';
 import { Receipt, Category, LineItem } from '../../types';
@@ -507,6 +508,28 @@ function EditReceiptScreen() {
     if (isNaN(amountVal) || amountVal < 0) {
       Alert.alert('Invalid amount', 'Please enter a valid amount.');
       return;
+    }
+
+    // Verify line items still sum to the printed subtotal — the user
+    // may have edited / deleted items since the last save and the
+    // result might no longer reconcile. Give them a chance to fix it
+    // OR save anyway if they've already cross-verified.
+    const mismatch = checkItemsAgainstSubtotal(items, receipt.subtotalAmount);
+    if (!mismatch.ok) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        Alert.alert(
+          "Line items don't match the subtotal",
+          `${mismatch.hint}\n\nItems total: $${mismatch.sum.toFixed(
+            2,
+          )}\nReceipt subtotal: $${mismatch.subtotal.toFixed(2)}`,
+          [
+            { text: 'Review items', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Save anyway', onPress: () => resolve(true) },
+          ],
+          { cancelable: true, onDismiss: () => resolve(false) },
+        );
+      });
+      if (!confirmed) return;
     }
 
     // Parse the user-typed YYYY-MM-DD as LOCAL time so the wall-clock
