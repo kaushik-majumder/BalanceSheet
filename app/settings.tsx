@@ -25,6 +25,10 @@ import {
   setGeminiApiKey,
 } from '../lib/secureStorage';
 import { parseReceiptWithGemini } from '../lib/geminiParseReceipt';
+import {
+  getCloudSyncDiagnostics,
+  subscribeCloudSyncDiagnostics,
+} from '../lib/cloudSync';
 
 function useSettingsStyles() {
   return useStyles((theme) => ({
@@ -601,6 +605,10 @@ export default function SettingsScreen() {
           </View>
         </Section>
 
+        <Section title="Cloud sync (debug)">
+          <CloudSyncDiagnosticsPanel />
+        </Section>
+
         <View style={styles.dangerZone}>
           <Pressable onPress={confirmSignOut} style={styles.signOutBtn} hitSlop={4}>
             <Ionicons name="log-out-outline" size={18} color={theme.colors.textPrimary} />
@@ -623,6 +631,92 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * Live read-out of Phase-2 cloud sync state. Renders the module-load,
+ * household-bootstrap, last-receipt-sync, and last-migration status so
+ * we can tell from a screenshot whether the native module is linked,
+ * whether the bootstrap reached Firestore, and what (if anything)
+ * went wrong. Subscribes to the same in-memory diagnostics buffer
+ * cloudSync.ts writes to, so the panel updates as events fire — no
+ * need to refresh manually.
+ */
+function CloudSyncDiagnosticsPanel() {
+  const theme = useTheme();
+  const styles = useSettingsStyles();
+  const [diag, setDiag] = useState(getCloudSyncDiagnostics());
+
+  useEffect(() => {
+    const refresh = () => setDiag(getCloudSyncDiagnostics());
+    const unsub = subscribeCloudSyncDiagnostics(refresh);
+    // Pull a fresh snapshot once on mount so the panel reflects the
+    // current state if the user opens Settings AFTER bootstrap has
+    // already happened.
+    refresh();
+    return unsub;
+  }, []);
+
+  const fmt = (ts: string | undefined) => {
+    if (!ts) return '—';
+    try {
+      return new Date(ts).toLocaleTimeString();
+    } catch {
+      return ts;
+    }
+  };
+
+  return (
+    <View style={{ gap: 6 }}>
+      <Row
+        label="Firestore module"
+        value={diag.moduleAvailable ? 'linked' : 'NOT LINKED (need new APK)'}
+      />
+      <Row
+        label="Storage module"
+        value={diag.storageAvailable ? 'linked' : 'not enabled (optional)'}
+      />
+      <Row label="Household id" value={diag.householdId ?? 'not set'} />
+      <Row
+        label="Last bootstrap"
+        value={
+          diag.lastBootstrap
+            ? `${diag.lastBootstrap.ok ? 'OK' : 'FAIL'} · ${fmt(diag.lastBootstrap.at)}${
+                diag.lastBootstrap.message ? ` · ${diag.lastBootstrap.message}` : ''
+              }`
+            : 'never ran'
+        }
+      />
+      <Row
+        label="Last receipt sync"
+        value={
+          diag.lastReceiptSync
+            ? `${diag.lastReceiptSync.ok ? 'OK' : 'FAIL'} · ${fmt(diag.lastReceiptSync.at)}${
+                diag.lastReceiptSync.message ? ` · ${diag.lastReceiptSync.message}` : ''
+              }`
+            : 'never ran'
+        }
+      />
+      <Row
+        label="Last migration"
+        value={
+          diag.lastMigration
+            ? `${diag.lastMigration.migrated} migrated, ${diag.lastMigration.failed} failed · ${fmt(diag.lastMigration.at)}`
+            : 'never ran'
+        }
+      />
+      <Text
+        style={{
+          color: theme.colors.textMuted,
+          fontSize: theme.font.xs,
+          marginTop: 6,
+          fontStyle: 'italic',
+        }}
+      >
+        Debug-only. Will be removed once cloud sync is stable.
+      </Text>
+    </View>
   );
 }
 
