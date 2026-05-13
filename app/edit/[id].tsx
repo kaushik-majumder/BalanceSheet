@@ -882,6 +882,18 @@ function EditReceiptScreen() {
       <ItemEditModal
         item={editingItem}
         extraTags={categoryTags}
+        onAddCustomTag={(tag) => {
+          // Sync newly-coined item-level tags into the receipt's
+          // shared categoryTags list. This is what makes the new
+          // tag available to other items on the same receipt and
+          // keeps the per-receipt chip strip in agreement with the
+          // per-item picker.
+          setCategoryTags((prev) =>
+            prev.some((t) => t.toLowerCase() === tag.toLowerCase())
+              ? prev
+              : [...prev, tag],
+          );
+        }}
         onClose={() => setEditingItem(null)}
         onSave={(updated) => {
           if (!receipt) return;

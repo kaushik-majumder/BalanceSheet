@@ -29,6 +29,7 @@ export function ItemEditModal({
   onSave,
   onDelete,
   extraTags = [],
+  onAddCustomTag,
 }: {
   item: LineItem | null;
   onClose: () => void;
@@ -37,6 +38,11 @@ export function ItemEditModal({
   /** Custom tags from the parent receipt that should appear in the
    *  category picker alongside the 10 standard categories. */
   extraTags?: string[];
+  /** Called when the user adds a brand-new tag from inside the
+   *  category picker. The parent should append it to the receipt-
+   *  level categoryTags so it stays in sync across all items on
+   *  this receipt. */
+  onAddCustomTag?: (tag: string) => void;
 }) {
   const theme = useTheme();
   const styles = useStyles((t) => ({
@@ -93,11 +99,53 @@ export function ItemEditModal({
       gap: 8,
       marginTop: t.spacing.xs,
     },
+    addTagBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      alignSelf: 'flex-start',
+      marginTop: t.spacing.xs,
+    },
+    addTagBtnText: {
+      color: t.colors.primary,
+      fontSize: t.font.sm,
+      fontWeight: '600',
+    },
+    addTagRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: t.spacing.xs,
+    },
+    addTagInput: {
+      flex: 1,
+      backgroundColor: t.colors.surfaceHigh,
+      color: t.colors.textPrimary,
+      fontSize: t.font.sm,
+      borderRadius: t.radius.sm,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    addTagSaveBtn: {
+      backgroundColor: t.colors.primary,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: t.radius.sm,
+    },
+    addTagSaveText: {
+      color: '#fff',
+      fontSize: t.font.sm,
+      fontWeight: '700',
+    },
   }));
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<Category | string>('Other');
   const [showCatPicker, setShowCatPicker] = useState(false);
+  const [addingTag, setAddingTag] = useState(false);
+  const [tagDraft, setTagDraft] = useState('');
 
   useEffect(() => {
     if (item) {
@@ -105,6 +153,8 @@ export function ItemEditModal({
       setAmount(item.amount.toFixed(2));
       setCategory(item.category ?? 'Other');
       setShowCatPicker(false);
+      setAddingTag(false);
+      setTagDraft('');
     }
   }, [item]);
 
@@ -135,6 +185,31 @@ export function ItemEditModal({
       return;
     }
     onSave({ ...item, name: name.trim(), amount: amountVal, category });
+  };
+
+  const commitTagDraft = () => {
+    const trimmed = tagDraft.trim();
+    if (!trimmed) {
+      setAddingTag(false);
+      return;
+    }
+    if (trimmed.length > 32) {
+      Alert.alert('Tag too long', 'Keep tags under 32 characters.');
+      return;
+    }
+    // De-dupe against standard categories + existing extras (case-insensitive),
+    // but accept any new label as the item's category either way.
+    const exists = pickerOptions.find(
+      (c) => c.toLowerCase() === trimmed.toLowerCase(),
+    );
+    const finalTag = exists ?? trimmed;
+    setCategory(finalTag);
+    setAddingTag(false);
+    setTagDraft('');
+    setShowCatPicker(false);
+    // Only propagate truly-new tags up to the parent so the receipt's
+    // shared categoryTags list grows without dupes.
+    if (!exists && onAddCustomTag) onAddCustomTag(trimmed);
   };
 
   const confirmDelete = () => {
@@ -197,20 +272,66 @@ export function ItemEditModal({
               />
             </TouchableOpacity>
             {showCatPicker && (
-              <View style={styles.categoryGrid}>
-                {pickerOptions.map((c) => (
-                  <TagChip
-                    key={c}
-                    tag={c}
-                    selected={c === category}
-                    size="sm"
-                    onToggle={() => {
-                      setCategory(c);
-                      setShowCatPicker(false);
-                    }}
-                  />
-                ))}
-              </View>
+              <>
+                <View style={styles.categoryGrid}>
+                  {pickerOptions.map((c) => (
+                    <TagChip
+                      key={c}
+                      tag={c}
+                      selected={c === category}
+                      size="sm"
+                      onToggle={() => {
+                        setCategory(c);
+                        setShowCatPicker(false);
+                      }}
+                    />
+                  ))}
+                </View>
+                {!addingTag ? (
+                  <Pressable
+                    onPress={() => setAddingTag(true)}
+                    style={styles.addTagBtn}
+                    hitSlop={6}
+                  >
+                    <Ionicons name="add" size={14} color={theme.colors.primary} />
+                    <Text style={styles.addTagBtnText}>Add custom tag</Text>
+                  </Pressable>
+                ) : (
+                  <View style={styles.addTagRow}>
+                    <TextInput
+                      value={tagDraft}
+                      onChangeText={setTagDraft}
+                      placeholder="e.g. Pet Food"
+                      placeholderTextColor={theme.colors.textMuted}
+                      style={styles.addTagInput}
+                      autoFocus
+                      onSubmitEditing={commitTagDraft}
+                      maxLength={32}
+                      autoCapitalize="words"
+                    />
+                    <Pressable
+                      onPress={commitTagDraft}
+                      style={styles.addTagSaveBtn}
+                      hitSlop={6}
+                    >
+                      <Text style={styles.addTagSaveText}>Add</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        setAddingTag(false);
+                        setTagDraft('');
+                      }}
+                      hitSlop={10}
+                    >
+                      <Ionicons
+                        name="close"
+                        size={20}
+                        color={theme.colors.textSecondary}
+                      />
+                    </Pressable>
+                  </View>
+                )}
+              </>
             )}
           </Card>
 
