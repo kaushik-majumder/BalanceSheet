@@ -530,6 +530,15 @@ const SKIP_LINE_RE = new RegExp(
     '\\bitems?\\s+returned\\b',
     '\\byou\\s+saved\\b',                // "You Saved $52.50" (Skechers)
     '\\bnew\\s+price\\b',                // "New Price: $110.00" — summary, not an item
+    // Quantity / deal qualifier lines that sit BELOW an item, not items
+    // themselves. Examples from a Panchvati grocery receipt:
+    //   "3 For $4.00"   — multi-buy deal qualifier
+    //   "2 For $1.00"   — multi-buy deal qualifier
+    //   "2 @ $3.99"     — quantity-times-rate breakdown
+    //   "2 x $3.99"     — same but with 'x' separator
+    // Without this skip, the parser captures them as inline items with
+    // name "3 For" / "2 @" and the qualifier price as the line amount.
+    '^\\s*\\d+\\s*(?:for|@|x)\\s+\\$?\\s*\\d',
     '\\bbogo\\b',                        // "BOGO 50% Off Footwear" promo banner
     '\\bstyle\\s*:',                     // "Style: 183004BLK" — item metadata
     '\\b(?:size|color|colour)\\s*:',     // "Size: 8 Color: BLACK" metadata
@@ -558,14 +567,19 @@ const SKIP_LINE_RE = new RegExp(
 // Negative-amount notations the parser must recognize:
 //   "15.00-"   — Costco / many warehouse chains
 //   "-15.00"   — generic
+//   "-$15.00"  — most discounts (minus BEFORE the $ sign)
+//   "$-15.00"  — rare, minus AFTER the $ sign
 //   "($15.00)" — Skechers / accounting-style parentheses
-// We capture the open-paren, leading minus, the number, and trailing
-// minus / status letter / close-paren together so any of these forms
-// produces a negative amount in the consumer.
+// Group 2 is leading minus before $, group 3 is leading minus after $
+// — either being present marks the amount as negative. The
+// `(?<=^|\s)` lookbehind on the leading-minus block keeps the minus
+// from binding to the trailing dash of a preceding word (e.g.
+// "MAVIS- $46.99T" where the dash is part of the SKU/style code, not
+// a sign on the price).
 const PRICE_AT_END_RE =
-  /(\()?\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*(\))?\s*$/;
+  /(?<=^|\s)(\()?(-)?\$?(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*(\))?\s*$/;
 const PRICE_ONLY_RE =
-  /^\s*(\()?\$?\s*(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*(\))?\s*$/;
+  /^\s*(\()?(-)?\$?(-)?(\d{1,5}\.\d{2})(-)?\s*([A-Za-z])?\s*(\))?\s*$/;
 const UPC_ONLY_RE = /^\s*\d{8,14}\s*$/;
 const ALPHA_RE = /[a-z]/i;
 
@@ -636,13 +650,17 @@ function extractInlineItems(
     }
     const priceMatch = line.match(priceRe);
     if (!priceMatch) continue;
-    // priceMatch groups: 1=open-paren, 2=leading-minus, 3=number,
-    // 4=trailing-minus, 5=letter, 6=close-paren. Any of paren-pair,
-    // leading-minus, or trailing-minus marks the amount as negative.
-    const parenthesized = priceMatch[1] === '(' && priceMatch[6] === ')';
+    // priceMatch groups: 1=open-paren, 2=minus-before-$, 3=minus-after-$,
+    // 4=number, 5=trailing-minus, 6=letter, 7=close-paren. Any of
+    // paren-pair, either leading-minus slot, or trailing-minus marks the
+    // amount as negative.
+    const parenthesized = priceMatch[1] === '(' && priceMatch[7] === ')';
     const negative =
-      parenthesized || priceMatch[2] === '-' || priceMatch[4] === '-';
-    const magnitude = parseFloat(priceMatch[3]);
+      parenthesized ||
+      priceMatch[2] === '-' ||
+      priceMatch[3] === '-' ||
+      priceMatch[5] === '-';
+    const magnitude = parseFloat(priceMatch[4]);
     if (!Number.isFinite(magnitude) || magnitude >= 10_000) continue;
     if (magnitude === 0) continue;
     const amount = negative ? -magnitude : magnitude;
@@ -739,12 +757,15 @@ function extractPairedItems(
     // Inline match — emit immediately and don't buffer.
     const inline = line.match(re.priceAtEndRe);
     if (inline) {
-      // Groups: 1=open-paren, 2=leading-minus, 3=number,
-      // 4=trailing-minus, 5=letter, 6=close-paren.
-      const parenthesized = inline[1] === '(' && inline[6] === ')';
+      // Groups: 1=open-paren, 2=minus-before-$, 3=minus-after-$,
+      // 4=number, 5=trailing-minus, 6=letter, 7=close-paren.
+      const parenthesized = inline[1] === '(' && inline[7] === ')';
       const negative =
-        parenthesized || inline[2] === '-' || inline[4] === '-';
-      const magnitude = parseFloat(inline[3]);
+        parenthesized ||
+        inline[2] === '-' ||
+        inline[3] === '-' ||
+        inline[5] === '-';
+      const magnitude = parseFloat(inline[4]);
       if (!Number.isFinite(magnitude) || magnitude >= 10_000 || magnitude === 0)
         continue;
       const amount = negative ? -magnitude : magnitude;
@@ -759,13 +780,14 @@ function extractPairedItems(
         });
       } else if (
         (name === '' || !re.alphaRe.test(name)) &&
-        amount > 0 &&
-        !re.excludedAmounts.has(round2(amount))
+        !re.excludedAmounts.has(round2(Math.abs(amount)))
       ) {
         // The line was JUST a price (no name on the same line) — buffer
         // it, unless it equals the receipt's subtotal/tax/total amount,
         // in which case it's a totals-block price, not a per-item price.
-        // Skip negative price-only lines: they'd dangle without a name.
+        // Negative amounts are preserved so they pair with the right
+        // name in two-column OCR (discounts otherwise drop silently and
+        // shift every subsequent item by one).
         pendingPrices.push({ amount });
       }
       continue;
@@ -774,10 +796,13 @@ function extractPairedItems(
     // Price-only line.
     const priceOnly = line.match(re.priceOnlyRe);
     if (priceOnly) {
-      const parenthesized = priceOnly[1] === '(' && priceOnly[6] === ')';
+      const parenthesized = priceOnly[1] === '(' && priceOnly[7] === ')';
       const negative =
-        parenthesized || priceOnly[2] === '-' || priceOnly[4] === '-';
-      const magnitude = parseFloat(priceOnly[3]);
+        parenthesized ||
+        priceOnly[2] === '-' ||
+        priceOnly[3] === '-' ||
+        priceOnly[5] === '-';
+      const magnitude = parseFloat(priceOnly[4]);
       const amount = negative ? -magnitude : magnitude;
       if (
         magnitude > 0 &&

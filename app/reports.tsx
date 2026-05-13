@@ -47,6 +47,7 @@ import {
   receiptsToCsv,
   topStores,
 } from '../lib/reports';
+import { generateReceiptsPdf, isPdfExportAvailable } from '../lib/pdfExport';
 import { Receipt, Category } from '../types';
 
 type PresetKey = 'this' | '2m' | '3m' | '6m' | 'custom';
@@ -165,27 +166,53 @@ function ReportsScreen() {
   const recurring: RecurringMatch[] = findRecurring(receipts, 3);
   const [exporting, setExporting] = useState(false);
 
-  const exportCsv = useCallback(async () => {
+  const exportReport = useCallback(async () => {
     if (exporting) return;
     if (receipts.length === 0) {
       Alert.alert(
         'Nothing to export',
-        'Scan a few receipts before generating a CSV.',
+        'Scan a few receipts before generating a report.',
       );
       return;
     }
     setExporting(true);
     try {
-      // Export ONLY the receipts in the user's currently selected
-      // range — matches the rest of the screen and keeps the CSV
-      // manageable when there are years of history.
-      const csv = receiptsToCsv(rangeReceipts);
       const stamp = `${format(start, 'yyyy-MM-dd')}_to_${format(end, 'yyyy-MM-dd')}`;
-      const path = `${FileSystem.documentDirectory}balancesheet-${stamp}.csv`;
-      await FileSystem.writeAsStringAsync(path, csv, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
-      // Lazy-require expo-sharing — see import comment.
+      const startLabel = format(start, 'PP');
+      const endLabel = format(end, 'PP');
+
+      // Prefer PDF when expo-print is linked in the running APK.
+      // Falls back to CSV on older builds that pre-date the native
+      // dep — the OTA ships JS only, so we can't assume the native
+      // module is loaded until the user installs a fresh APK.
+      let path: string | null = null;
+      let mimeType = 'application/pdf';
+      let uti = 'com.adobe.pdf';
+      let dialogTitle = 'Export receipts PDF';
+
+      if (isPdfExportAvailable()) {
+        path = await generateReceiptsPdf({
+          receipts: rangeReceipts,
+          startLabel,
+          endLabel,
+        });
+      }
+
+      if (!path) {
+        // CSV fallback (or this is an older APK without expo-print).
+        const csv = receiptsToCsv(rangeReceipts);
+        path = `${FileSystem.documentDirectory}balancesheet-${stamp}.csv`;
+        await FileSystem.writeAsStringAsync(path, csv, {
+          encoding: FileSystem.EncodingType.UTF8,
+        });
+        mimeType = 'text/csv';
+        uti = 'public.comma-separated-values-text';
+        dialogTitle = 'Export receipts CSV';
+      }
+
+      // Lazy-require expo-sharing — the native side wasn't in the
+      // original APK before this branch added it, so a top-level
+      // import would crash the screen on older builds.
       let Sharing: typeof import('expo-sharing') | null = null;
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
@@ -198,14 +225,14 @@ function ReportsScreen() {
         : false;
       if (Sharing && canShare) {
         await Sharing.shareAsync(path, {
-          mimeType: 'text/csv',
-          dialogTitle: 'Export receipts CSV',
-          UTI: 'public.comma-separated-values-text',
+          mimeType,
+          dialogTitle,
+          UTI: uti,
         });
       } else {
         Alert.alert(
           'Saved',
-          `Sharing isn't available in this build, but the CSV was written to ${path}. Rebuild the app to enable in-app share.`,
+          `Sharing isn't available in this build, but the file was written to ${path}. Rebuild the app to enable in-app share.`,
         );
       }
     } catch (e) {
@@ -213,7 +240,7 @@ function ReportsScreen() {
     } finally {
       setExporting(false);
     }
-  }, [rangeReceipts, exporting, start, end]);
+  }, [rangeReceipts, exporting, start, end, receipts.length]);
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
@@ -222,10 +249,10 @@ function ReportsScreen() {
         rightActions={[
           {
             icon: 'share-outline',
-            onPress: exportCsv,
+            onPress: exportReport,
             disabled: receipts.length === 0,
             loading: exporting,
-            accessibilityLabel: 'Export receipts as CSV',
+            accessibilityLabel: 'Export receipts',
           },
         ]}
       />
