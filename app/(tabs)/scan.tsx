@@ -19,7 +19,7 @@ import { useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import TextRecognition from 'react-native-text-recognition';
+import TextRecognition from '@react-native-ml-kit/text-recognition';
 import { v4 as uuidv4 } from 'uuid';
 import {
   saveReceipt,
@@ -450,7 +450,14 @@ export default function ScanScreen() {
   const runOCR = async (uri: string) => {
     setScanState('processing');
     try {
-      const lines: string[] = await TextRecognition.recognize(uri);
+      // @react-native-ml-kit/text-recognition (replacement for the
+      // unmaintained react-native-text-recognition) returns a structured
+      // result with blocks → lines → text. Flatten to a string-array of
+      // lines so the existing parser keeps working unchanged.
+      const ocr = await TextRecognition.recognize(uri);
+      const lines: string[] = ocr.blocks.flatMap((block) =>
+        block.lines.map((line) => line.text),
+      );
       const rawText = lines.join('\n');
       const result = parseReceiptText(rawText);
 

@@ -1,8 +1,7 @@
-const withTextRecognitionFix = require('./plugins/withTextRecognitionFix');
 const withGooglePlayAdiToken = require('./plugins/withGooglePlayAdiToken');
 
 module.exports = ({ config }) => {
-  return withGooglePlayAdiToken(withTextRecognitionFix({
+  return withGooglePlayAdiToken({
     ...config,
     name: 'Receipt Scanner',
     slug: 'receipt-scanner',
@@ -86,12 +85,18 @@ module.exports = ({ config }) => {
           ios: { useFrameworks: 'static' },
           android: {
             // Google Play minimum target raised to API 35 (Android 15)
-            // for new app uploads in 2026. Expo SDK 51 defaults to 34;
-            // override here. compileSdk must be >= targetSdk so we
-            // bump both. buildTools 35.0.0 matches the SDK version.
+            // for new app uploads in 2026. compileSdk must be >=
+            // targetSdk so both bump together. buildTools 35.0.0
+            // matches the SDK version.
             compileSdkVersion: 35,
             targetSdkVersion: 35,
             buildToolsVersion: '35.0.0',
+            // Expo SDK 52 ships Kotlin 1.9.24 but bundles a Compose
+            // Compiler (1.5.15) that requires 1.9.25 — the build
+            // fails with a "not known to be compatible" error
+            // unless we bump Kotlin explicitly. 1.9.25 is the
+            // minimum that satisfies both.
+            kotlinVersion: '1.9.25',
           },
         },
       ],
@@ -124,5 +129,5 @@ module.exports = ({ config }) => {
       emailjsTemplateId: process.env.EMAILJS_TEMPLATE_ID,
       emailjsPublicKey: process.env.EMAILJS_PUBLIC_KEY,
     },
-  }));
+  });
 };
