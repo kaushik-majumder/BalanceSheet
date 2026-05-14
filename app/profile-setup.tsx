@@ -33,8 +33,24 @@ export default function ProfileSetupScreen() {
   const theme = useTheme();
   const styles = useStyles(makeStyles);
 
-  const [firstName, setFirstName] = useState(profile?.firstName ?? '');
-  const [lastName, setLastName] = useState(profile?.lastName ?? '');
+  // Pre-fill name from the auth user's displayName when no local
+  // profile exists yet — saves invitees from retyping the name they
+  // already provided in the invite-accept signup. We split on first
+  // space so "Alex Smith" → firstName "Alex", lastName "Smith";
+  // single-word displayNames just fill firstName and leave lastName
+  // blank for the user to type.
+  const initialName = (() => {
+    if (profile) {
+      return { first: profile.firstName, last: profile.lastName };
+    }
+    const dn = (user?.displayName ?? '').trim();
+    if (!dn) return { first: '', last: '' };
+    const spaceIdx = dn.indexOf(' ');
+    if (spaceIdx < 0) return { first: dn, last: '' };
+    return { first: dn.slice(0, spaceIdx), last: dn.slice(spaceIdx + 1).trim() };
+  })();
+  const [firstName, setFirstName] = useState(initialName.first);
+  const [lastName, setLastName] = useState(initialName.last);
   const [gender, setGender] = useState<Gender | null>(profile?.gender ?? null);
   const [age, setAge] = useState(profile?.age ? String(profile.age) : '');
   const [photoUri, setPhotoUri] = useState<string | null>(profile?.photoUri ?? null);
