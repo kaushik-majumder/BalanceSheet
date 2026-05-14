@@ -54,6 +54,13 @@ const STICKY_VOLUNTARY = new Set([
   'reports',
 ]);
 
+// Routes the guard must NEVER redirect away from, regardless of auth
+// state. The invite-finish screen is reached via an app-link tap and
+// runs its own create-account → sign-out → /auth flow; if the guard
+// fires before that finishes it would yank the user to /auth without
+// the email pre-fill or the success toast.
+const NEVER_REDIRECT_FROM = new Set(['invite-finish', 'invite']);
+
 function RootStack() {
   const theme = useTheme();
   const {
@@ -84,6 +91,11 @@ function RootStack() {
       biometricUnlocked,
     });
     if (target === current) return;
+    // Some screens own their own routing (e.g. invite-finish flows
+    // unauthenticated user → /auth itself after signup). The guard
+    // would otherwise see "no user → /auth" and yank the user off
+    // mid-flow.
+    if (NEVER_REDIRECT_FROM.has(current)) return;
     // User is on a voluntary screen (modal / edit) and the gate state
     // says they're cleared for the app — leave them on it. We also
     // bail when `current` is empty: useSegments() can return [] for

@@ -30,7 +30,7 @@ import {
   migrateLocalReceiptsToCloud,
   subscribeToHouseholdReceipts,
 } from './cloudSync';
-import { isFirebaseEmailLink } from './inviteLink';
+import { isFirebaseEmailLink, parseInviteAppLink } from './inviteLink';
 import {
   getBiometricAsked,
   getBiometricEnabled,
@@ -63,6 +63,14 @@ type AuthState = {
   setProfile: (p: Profile) => void;
   signOut: () => Promise<void>;
   deleteAccount: () => Promise<void>;
+  /**
+   * Toggle suppression of the post-auth household bootstrap. Used by
+   * the invite-signup flow which creates the user, accepts the invite
+   * directly, then signs out — all without wanting AuthContext to race
+   * in with ensureHouseholdForUser and create an orphan solo household.
+   * Set BEFORE createUserWithEmailAndPassword and unset AFTER signOut.
+   */
+  setSuppressBootstrap: (suppressed: boolean) => void;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -141,20 +149,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // listener multiple times for token refresh, focus changes, etc.;
   // we only want the invite dialog shown once per session.
   const invitePromptedForUidRef = useRef<string | null>(null);
+  // While true the auth-state listener skips ensureHouseholdForUser
+  // + pending-invite Alert. The invite-signup screen sets this so it
+  // can run its own acceptInvite + signOut without AuthContext racing
+  // in and creating a stray solo household for the just-created uid.
+  const suppressBootstrapRef = useRef(false);
 
-  // Phase 3 magic-link invites: catch the universal-link URL the
-  // invitee taps in their email. Route to the dedicated finish
-  // screen which handles the stashed-email fast path AND the
-  // manual-entry fallback (cross-platform; Alert.prompt is iOS-only).
+  // Invite app-links: when the invitee taps the link in their email
+  // the OS opens the app via the verified app-link config. We parse
+  // the URL for the invited email and hand off to the finish screen.
+  // Falls back to the legacy isFirebaseEmailLink check for any older
+  // emails still floating around — that path is now inert (we no
+  // longer send Firebase magic links) but harmless.
   useEffect(() => {
     const handleUrl = (url: string | null) => {
-      if (!url || !isFirebaseEmailLink(url)) return;
-      // Cast — expo-router's typed-routes table is generated from a
-      // build step that hasn't seen the new app/invite-finish.tsx yet.
-      router.push({
-        pathname: '/invite-finish' as never,
-        params: { link: url },
-      });
+      if (!url) return;
+      const parsed = parseInviteAppLink(url);
+      if (parsed) {
+        // Cast — expo-router's typed-routes table is generated from a
+        // build step that hasn't seen the new app/invite-finish.tsx yet.
+        router.push({
+          pathname: '/invite-finish' as never,
+          params: { email: parsed.email },
+        });
+        return;
+      }
+      if (isFirebaseEmailLink(url)) {
+        router.push({
+          pathname: '/invite-finish' as never,
+          params: { link: url },
+        });
+      }
     };
 
     // Catch URLs received while the app is open.
@@ -192,6 +217,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Tear down any previous user's receipts listener before we
       // potentially bootstrap a new household and subscribe again.
       tearDownReceiptsListener();
+
+      // Invite-signup flow disables this branch while it does its own
+      // acceptInvite + signOut. Without the gate, ensureHouseholdFor-
+      // User would race and create a solo household for the brand-new
+      // uid, leaving an orphan after acceptInvite re-points the user.
+      if (suppressBootstrapRef.current) {
+        return;
+      }
 
       if (u?.uid) {
         const hid = await ensureHouseholdForUser({
@@ -375,6 +408,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Finally tear down the Firebase Auth account itself.
         await deleteCurrentAccount();
         // onAuthStateChanged will fire with null, clearing user + profile.
+      },
+      setSuppressBootstrap: (suppressed: boolean) => {
+        suppressBootstrapRef.current = suppressed;
       },
     }),
     [

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -10,8 +10,10 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../components/ui/Button';
+import { useToast } from '../components/ui/Toast';
 import { Theme, useStyles, useTheme } from '../constants/theme';
 import {
   ConfirmationResult,
@@ -27,8 +29,21 @@ import { humanizeAuthError } from '../lib/authErrors';
 type Tab = 'email' | 'phone' | 'google';
 
 export default function AuthScreen() {
+  // Email pre-fill + success message come from the invite-finish
+  // screen after a successful signup. Both are optional — when absent
+  // this is just a normal /auth visit.
+  const params = useLocalSearchParams<{ email?: string; msg?: string }>();
+  const initialEmail = (params.email ?? '').trim();
+  const initialMsg = (params.msg ?? '').trim();
   const [tab, setTab] = useState<Tab>('email');
   const styles = useStyles(makeStyles);
+  const toast = useToast();
+  const toastShownRef = useRef(false);
+  useEffect(() => {
+    if (toastShownRef.current || !initialMsg) return;
+    toastShownRef.current = true;
+    toast.show({ kind: 'success', message: initialMsg });
+  }, [initialMsg, toast]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -52,7 +67,7 @@ export default function AuthScreen() {
           </View>
 
           <View style={styles.formWrap}>
-            {tab === 'email' && <EmailForm />}
+            {tab === 'email' && <EmailForm initialEmail={initialEmail} />}
             {tab === 'phone' && <PhoneForm />}
             {tab === 'google' && <GoogleForm />}
           </View>
@@ -95,11 +110,11 @@ function TabButton({
   );
 }
 
-function EmailForm() {
+function EmailForm({ initialEmail }: { initialEmail?: string }) {
   const theme = useTheme();
   const styles = useStyles(makeStyles);
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail ?? '');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
