@@ -798,6 +798,160 @@ export async function leaveCurrentHousehold(args: {
   }
 }
 
+// ─── delete-account cleanup (Phase 3) ─────────────────────────────────────
+
+/**
+ * Wipe every cloud trace of the current user before Firebase Auth
+ * actually deletes their account. Called by AuthContext.deleteAccount.
+ *
+ * Two cases:
+ *
+ *   Solo household (memberCount <= 1):
+ *     - Delete every receipt doc under households/{hid}/receipts/.
+ *     - Delete every photo under households/{hid}/photos/ (best effort —
+ *       only fires when Cloud Storage is wired up).
+ *     - Delete the household doc itself.
+ *
+ *   Shared household (memberCount > 1):
+ *     - Remove the user's uid from the household's memberUids and
+ *       decrement memberCount. The other family members keep all the
+ *       receipts and photos.
+ *
+ * Either way we also:
+ *     - Delete users/{uid}.
+ *     - Delete any pending invite addressed to this user's email
+ *       (invites/{lowercased-email}).
+ *
+ * Order matters: every Firestore write requires an authenticated
+ * token. We MUST do all of this BEFORE the Firebase Auth account is
+ * deleted, otherwise the subsequent writes get rejected with
+ * permission-denied and the data is permanently orphaned (no other
+ * user can clean it up because the rules require household
+ * membership).
+ *
+ * Best effort throughout — if any individual step fails (network,
+ * rules, missing doc), we log it and continue. A partially-failed
+ * cleanup is still much better than leaving everything behind.
+ */
+export async function deleteCloudUserData(args: {
+  uid: string;
+  householdId: string | null;
+  email: string | null;
+}): Promise<{ receiptsDeleted: number; soloHouseholdDeleted: boolean }> {
+  const firestore = loadFirestore();
+  if (!firestore) {
+    return { receiptsDeleted: 0, soloHouseholdDeleted: false };
+  }
+  let receiptsDeleted = 0;
+  let soloHouseholdDeleted = false;
+  try {
+    const db = firestore();
+
+    // Handle the household first since it requires membership.
+    if (args.householdId) {
+      const hRef = db.collection('households').doc(args.householdId);
+      try {
+        const hSnap = await hRef.get();
+        if (hSnap.exists) {
+          const data = hSnap.data() ?? {};
+          const memberUids = (data.memberUids as string[] | undefined) ?? [];
+          const isSolo = memberUids.length <= 1;
+          if (isSolo) {
+            // Delete every receipt under this household. Chunked
+            // batched deletes — 400 per batch (Firestore caps at 500).
+            const receiptsCol = hRef.collection('receipts');
+            // Pagination loop: pull all docs up front since the
+            // typical user has at most a few hundred receipts.
+            const snap = await receiptsCol.get();
+            const docs = snap.docs;
+            const CHUNK = 400;
+            for (let i = 0; i < docs.length; i += CHUNK) {
+              const batch = db.batch();
+              for (const d of docs.slice(i, i + CHUNK)) batch.delete(d.ref);
+              try {
+                await batch.commit();
+                receiptsDeleted += Math.min(CHUNK, docs.length - i);
+              } catch {
+                // Try one-by-one as a fallback.
+                for (const d of docs.slice(i, i + CHUNK)) {
+                  try {
+                    await d.ref.delete();
+                    receiptsDeleted++;
+                  } catch {
+                    // skip
+                  }
+                }
+              }
+            }
+            // Best-effort photo cleanup. The Storage module is only
+            // available on a Blaze-upgraded project; on Spark this
+            // silently no-ops.
+            await tryDeleteHouseholdPhotos(args.householdId, docs.map((d) => d.id));
+            // Finally the household itself.
+            try {
+              await hRef.delete();
+              soloHouseholdDeleted = true;
+            } catch {
+              // ignore
+            }
+          } else {
+            // Shared household: just remove our membership.
+            try {
+              await hRef.update({
+                memberUids: firestore.FieldValue.arrayRemove(args.uid),
+                memberCount: firestore.FieldValue.increment(-1),
+                updatedAt: firestore.FieldValue.serverTimestamp(),
+              });
+            } catch {
+              // ignore
+            }
+          }
+        }
+      } catch {
+        // ignore household errors
+      }
+    }
+
+    // User doc — always delete.
+    try {
+      await db.collection('users').doc(args.uid).delete();
+    } catch {
+      // ignore
+    }
+
+    // Any pending invite addressed to this user. We can only target
+    // it by the doc id (lowercased email); if the user has no email
+    // (phone-only auth) there's nothing to delete.
+    if (args.email) {
+      try {
+        await db.collection('invites').doc(normalizeEmail(args.email)).delete();
+      } catch {
+        // ignore
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[cloudSync] deleteCloudUserData failed:', (e as Error)?.message);
+  }
+  return { receiptsDeleted, soloHouseholdDeleted };
+}
+
+async function tryDeleteHouseholdPhotos(
+  householdId: string,
+  receiptIds: string[],
+): Promise<void> {
+  const storage = loadStorage();
+  if (!storage) return;
+  for (const rid of receiptIds) {
+    try {
+      await storage().ref(`households/${householdId}/photos/${rid}.jpg`).delete();
+    } catch {
+      // Storage delete throws when the object doesn't exist — fine,
+      // means we never uploaded a photo for this receipt.
+    }
+  }
+}
+
 // ─── one-shot backfill of pre-existing local data ─────────────────────────
 
 /**

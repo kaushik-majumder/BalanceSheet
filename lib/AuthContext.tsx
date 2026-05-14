@@ -17,12 +17,14 @@ import { Profile, getProfile, deleteProfile } from './profile';
 import {
   deleteAllReceipts,
   getAllReceipts,
+  getCurrentHouseholdId,
   setCurrentHouseholdId,
   setCurrentUserId,
 } from './database';
 import {
   acceptInvite,
   declineInvite,
+  deleteCloudUserData,
   ensureHouseholdForUser,
   getPendingInviteForEmail,
   migrateLocalReceiptsToCloud,
@@ -340,13 +342,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       deleteAccount: async () => {
         const uid = user?.uid;
         if (!uid) return;
-        // Wipe local data first so a partial failure (e.g. Firebase requires
-        // recent re-authentication) doesn't leave orphaned receipts behind.
+        // Wipe CLOUD data first while we still have an authenticated
+        // Firebase token. Once deleteCurrentAccount() runs, every
+        // Firestore write fails with permission-denied because the
+        // rules require an authenticated household member — and we'd
+        // leave orphaned receipts, household docs, and pending
+        // invites behind that no one can clean up later.
+        //
+        // deleteCloudUserData handles the solo-vs-shared household
+        // distinction internally: solo means we delete the whole
+        // household + all its receipts; shared means we just remove
+        // ourselves from memberUids so the remaining family keeps
+        // their data.
+        const householdId = getCurrentHouseholdId();
+        try {
+          await deleteCloudUserData({
+            uid,
+            householdId,
+            email: user?.email ?? null,
+          });
+        } catch {
+          // Even on cloud-cleanup failure we proceed with local +
+          // auth deletion — the user expects the account gone, and
+          // any orphaned cloud docs can be manually scrubbed later.
+        }
+        // Local SQLite wipe.
         await Promise.all([deleteAllReceipts(), deleteProfile(uid)]);
         await resetAllSecureStorage();
         setOnboardingSeenState(false);
         setBiometricEnabledState(false);
         setBiometricAskedState(false);
+        // Finally tear down the Firebase Auth account itself.
         await deleteCurrentAccount();
         // onAuthStateChanged will fire with null, clearing user + profile.
       },
