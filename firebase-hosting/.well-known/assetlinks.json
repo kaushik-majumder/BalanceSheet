@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.kaushikmajumder.receiptscanner",
+      "sha256_cert_fingerprints": [
+        "A8:35:40:AC:39:47:EB:5B:44:9B:95:51:EF:2C:B0:0D:FA:84:C6:69:B3:88:BD:C5:A0:F7:4B:58:C2:C1:86:11"
+      ]
+    }
+  }
+]
