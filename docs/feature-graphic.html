@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Receipt Scanner — Feature Graphic</title>
+<style>
+  /* Render this file in a browser at exactly 1024 x 500 viewport,
+     then screenshot it (or use Chrome DevTools → Capture full-size
+     screenshot) to produce the Play Store feature graphic PNG.
+     Play requires PNG with NO transparency at exactly 1024x500.
+     If you'd rather hand-design this in Canva or Figma, the colors
+     and proportions below are a starting reference. */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 1024px;
+    height: 500px;
+    overflow: hidden;
+    background: #0F172A;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+      Roboto, Helvetica, Arial, sans-serif;
+    color: #f3f4f6;
+  }
+  .canvas {
+    width: 1024px;
+    height: 500px;
+    position: relative;
+    background:
+      radial-gradient(ellipse 700px 400px at 80% 50%, rgba(16, 185, 129, 0.18), transparent 70%),
+      radial-gradient(ellipse 500px 300px at 15% 30%, rgba(37, 99, 235, 0.12), transparent 70%),
+      #0F172A;
+    overflow: hidden;
+  }
+  .left {
+    position: absolute;
+    top: 50%;
+    left: 64px;
+    transform: translateY(-50%);
+    max-width: 540px;
+  }
+  .brand-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .logo {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #10B981 0%, #0EA5E9 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 28px;
+    color: #0F172A;
+    letter-spacing: -1px;
+  }
+  .brand-name {
+    font-size: 22px;
+    font-weight: 600;
+    color: #94a3b8;
+    letter-spacing: -0.01em;
+  }
+  h1 {
+    font-size: 64px;
+    line-height: 1.05;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    color: #ffffff;
+    margin-bottom: 16px;
+  }
+  .accent {
+    color: #10B981;
+  }
+  .tagline {
+    font-size: 22px;
+    line-height: 1.4;
+    color: #cbd5e1;
+    font-weight: 400;
+    max-width: 480px;
+  }
+  .right {
+    position: absolute;
+    top: 50%;
+    right: 96px;
+    transform: translateY(-50%) rotate(-6deg);
+    width: 240px;
+    height: 380px;
+  }
+  .receipt {
+    width: 100%;
+    height: 100%;
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 22px 22px;
+    color: #1f2937;
+    font-family: 'Courier New', monospace;
+    box-shadow:
+      0 30px 60px rgba(0, 0, 0, 0.5),
+      0 10px 20px rgba(16, 185, 129, 0.2);
+    position: relative;
+  }
+  .receipt::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    left: 0;
+    right: 0;
+    height: 16px;
+    background: repeating-linear-gradient(90deg, transparent 0, transparent 6px, #0F172A 6px, #0F172A 12px);
+    -webkit-mask: radial-gradient(circle 6px at 6px 0, transparent 6px, #000 6px) repeat-x 0 0 / 12px 100%;
+  }
+  .receipt-header {
+    text-align: center;
+    font-weight: 700;
+    font-size: 14px;
+    border-bottom: 2px dashed #d1d5db;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    letter-spacing: 1px;
+  }
+  .receipt-line {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    margin-bottom: 6px;
+    color: #374151;
+  }
+  .receipt-line.muted { color: #9ca3af; font-size: 10px; }
+  .receipt-total {
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 2px dashed #d1d5db;
+    display: flex;
+    justify-content: space-between;
+    font-weight: 700;
+    font-size: 14px;
+    color: #059669;
+  }
+  .receipt-check {
+    margin-top: 18px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #10B981;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    margin-right: auto;
+    color: #ffffff;
+    font-size: 22px;
+    font-weight: 800;
+  }
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="left">
+    <div class="brand-row">
+      <div class="logo">$</div>
+      <div class="brand-name">RECEIPT SCANNER</div>
+    </div>
+    <h1>Scan. <span class="accent">Share.</span><br/>Track.</h1>
+    <div class="tagline">
+      Snap any receipt — AI auto-categorizes line items and syncs
+      across your whole household, instantly.
+    </div>
+  </div>
+  <div class="right">
+    <div class="receipt">
+      <div class="receipt-header">SHOP-N-SAVE</div>
+      <div class="receipt-line"><span>Milk 2%</span><span>$3.49</span></div>
+      <div class="receipt-line"><span>Avocado</span><span>$1.89</span></div>
+      <div class="receipt-line"><span>Sourdough</span><span>$4.50</span></div>
+      <div class="receipt-line"><span>Coffee Beans</span><span>$12.99</span></div>
+      <div class="receipt-line muted"><span>Subtotal</span><span>$22.87</span></div>
+      <div class="receipt-line muted"><span>Tax</span><span>$1.83</span></div>
+      <div class="receipt-total"><span>TOTAL</span><span>$24.70</span></div>
+      <div class="receipt-check">✓</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
