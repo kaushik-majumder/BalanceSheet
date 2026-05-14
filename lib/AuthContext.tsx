@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, Linking } from 'react-native';
+import { router } from 'expo-router';
 import Constants from 'expo-constants';
 import {
   AuthProvider as FirebaseProviderId,
@@ -27,6 +28,7 @@ import {
   migrateLocalReceiptsToCloud,
   subscribeToHouseholdReceipts,
 } from './cloudSync';
+import { isFirebaseEmailLink } from './inviteLink';
 import {
   getBiometricAsked,
   getBiometricEnabled,
@@ -137,6 +139,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // listener multiple times for token refresh, focus changes, etc.;
   // we only want the invite dialog shown once per session.
   const invitePromptedForUidRef = useRef<string | null>(null);
+
+  // Phase 3 magic-link invites: catch the universal-link URL the
+  // invitee taps in their email. Route to the dedicated finish
+  // screen which handles the stashed-email fast path AND the
+  // manual-entry fallback (cross-platform; Alert.prompt is iOS-only).
+  useEffect(() => {
+    const handleUrl = (url: string | null) => {
+      if (!url || !isFirebaseEmailLink(url)) return;
+      // Cast — expo-router's typed-routes table is generated from a
+      // build step that hasn't seen the new app/invite-finish.tsx yet.
+      router.push({
+        pathname: '/invite-finish' as never,
+        params: { link: url },
+      });
+    };
+
+    // Catch URLs received while the app is open.
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      handleUrl(url);
+    });
+    // Catch URLs that launched the app from a cold start.
+    Linking.getInitialURL()
+      .then((u) => handleUrl(u))
+      .catch(() => {});
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(async (u) => {

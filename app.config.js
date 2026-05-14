@@ -29,6 +29,11 @@ module.exports = ({ config }) => {
           'ReceiptScanner needs photo library access to import receipts.',
         NSFaceIDUsageDescription: 'Use Face ID to quickly and securely unlock ReceiptScanner.',
       },
+      // Phase 3 magic-link invites: an invite email arrives with a
+      // link on our Firebase Hosting domain. iOS opens it directly
+      // in the app via universal links once the apple-app-site-
+      // association file lives at https://<domain>/.well-known/.
+      associatedDomains: ['applinks:balancesheet-android.web.app'],
     },
     android: {
       adaptiveIcon: {
@@ -48,6 +53,24 @@ module.exports = ({ config }) => {
       package: 'com.kaushikmajumder.receiptscanner',
       versionCode: 1,
       googleServicesFile: process.env.GOOGLE_SERVICES_JSON ?? './google-services.json',
+      // Phase 3 magic-link invites: paired with the iOS associated
+      // domain above. autoVerify=true makes Android verify the
+      // assetlinks.json file on the hosting domain at install time
+      // and route matching URLs directly to the app.
+      intentFilters: [
+        {
+          action: 'VIEW',
+          autoVerify: true,
+          data: [
+            {
+              scheme: 'https',
+              host: 'balancesheet-android.web.app',
+              pathPrefix: '/invite',
+            },
+          ],
+          category: ['BROWSABLE', 'DEFAULT'],
+        },
+      ],
     },
     plugins: [
       'expo-router',
