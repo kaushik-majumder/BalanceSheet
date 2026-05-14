@@ -51,7 +51,7 @@ module.exports = ({ config }) => {
         'android.permission.USE_FINGERPRINT',
       ],
       package: 'com.kaushikmajumder.receiptscanner',
-      versionCode: 1,
+      versionCode: 2,
       googleServicesFile: process.env.GOOGLE_SERVICES_JSON ?? './google-services.json',
       // Phase 3 magic-link invites: paired with the iOS associated
       // domain above. autoVerify=true makes Android verify the
