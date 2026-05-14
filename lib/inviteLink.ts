@@ -1,30 +1,27 @@
+import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
 /**
- * Email-link (magic-link) invite flow for Phase 3. Wraps Firebase
- * Auth's `sendSignInLinkToEmail` + `signInWithEmailLink` so the
- * invitee gets a real email with a tap-to-open link.
+ * Household-invite email flow. The user-facing email is sent via
+ * EmailJS (free tier, no Blaze plan needed) from a connected Gmail
+ * account. The template + sender address live in the EmailJS
+ * dashboard; this module just POSTs the substitution variables.
  *
- * Two pieces:
- *  - sendInviteEmailLink: the inviter calls this. We compose an
- *    ActionCodeSettings pointing at our Firebase Hosting domain,
- *    Firebase sends the email, our Firestore invites doc is written
- *    in parallel (so the recipient's app-side accept check still
- *    finds something even if the email is bounced).
- *  - completeEmailLinkSignIn: invitee taps the email link → app
- *    receives it via Linking → we read the URL, recover the email
- *    (from SecureStore or by prompting), and sign in.
+ * The recipient's tap on the link in the email opens the app via
+ * the existing app-link config (https://balancesheet-android.web.app
+ * /invite). The existing invites/{email} doc + getPendingInviteFor-
+ * Email flow handles the actual accept at sign-in.
  *
- * Defensive loading
- * -----------------
- * @react-native-firebase/auth IS in the current APK so we can import
- * it normally — but firestore is required lazily by the existing
- * cloudSync helpers, so we mirror that here for symmetry.
+ * Legacy helpers (isFirebaseEmailLink, completeEmailLinkSignIn) are
+ * kept below because AuthContext still routes incoming URLs through
+ * them; they're inert now that no Firebase magic-link emails are
+ * being sent, and can be removed once that wiring is cleaned up.
  */
 
 const INVITE_HOSTING_DOMAIN = 'balancesheet-android.web.app';
 const INVITE_LANDING_PATH = '/invite';
 const PENDING_INVITE_EMAIL_KEY = 'bs.invite.pendingEmail';
+const EMAILJS_ENDPOINT = 'https://api.emailjs.com/api/v1.0/email/send';
 
 type AuthModule = typeof import('@react-native-firebase/auth').default;
 
@@ -41,59 +38,78 @@ function loadAuth(): AuthModule | null {
   return cachedAuth as AuthModule | null;
 }
 
-/**
- * Build the ActionCodeSettings that Firebase uses to compose + send
- * the invite email. The `url` is what the recipient lands on after
- * tapping; with `handleCodeInApp: true` Firebase opens the app
- * directly via the universal link / app link configured in
- * app.config.js. If the app isn't installed, Firebase's landing page
- * sends the user to the App Store / Play Store with the right
- * package id pre-filled.
- */
-function buildActionCodeSettings(): {
-  url: string;
-  handleCodeInApp: boolean;
-  iOS: { bundleId: string };
-  android: { packageName: string; installApp: boolean };
-} {
-  return {
-    url: `https://${INVITE_HOSTING_DOMAIN}${INVITE_LANDING_PATH}`,
-    handleCodeInApp: true,
-    iOS: { bundleId: 'com.kaushikmajumder.receiptscanner' },
-    android: {
-      packageName: 'com.kaushikmajumder.receiptscanner',
-      installApp: true,
-    },
-  };
+function readEmailjsConfig(): {
+  serviceId: string;
+  templateId: string;
+  publicKey: string;
+} | null {
+  const extra =
+    (Constants.expoConfig?.extra as Record<string, unknown> | undefined) ??
+    (Constants.manifest as { extra?: Record<string, unknown> } | undefined)
+      ?.extra;
+  const serviceId = (extra?.emailjsServiceId as string | undefined) ?? '';
+  const templateId = (extra?.emailjsTemplateId as string | undefined) ?? '';
+  const publicKey = (extra?.emailjsPublicKey as string | undefined) ?? '';
+  if (!serviceId || !templateId || !publicKey) return null;
+  return { serviceId, templateId, publicKey };
 }
 
 /**
- * Trigger Firebase's email send. The caller (lib/cloudSync's
- * inviteUserToHousehold) has already written the invites/{email}
- * doc; this is the user-facing notification layer.
+ * Send the templated invite email via EmailJS. The template (with
+ * {{inviter_name}}, {{accept_link}}, {{to_email}} placeholders) and
+ * the FROM address (your Gmail) are configured on the EmailJS
+ * dashboard — this function just POSTs the substitution vars.
  *
  * Returns a discriminated result so the UI can show the right
- * feedback. Errors are wrapped, not thrown — every meaningful
- * failure (auth not enabled, quota exceeded, invalid email) is
- * mapped to a readable reason.
+ * feedback. The Firestore invites/{email} doc is the source of truth
+ * for the accept flow, written by the caller BEFORE this — so an
+ * email-send failure here is recoverable (the recipient can still
+ * sign in with that email and pick up the pending invite).
  */
 export async function sendInviteEmailLink(
   email: string,
+  inviter?: { name?: string | null; email?: string | null },
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const authMod = loadAuth();
-  if (!authMod) return { ok: false, reason: 'auth module not loaded' };
+  const cfg = readEmailjsConfig();
+  if (!cfg) {
+    return { ok: false, reason: 'EmailJS credentials not configured' };
+  }
+  const trimmed = email.trim();
+  if (!trimmed || !trimmed.includes('@')) {
+    return { ok: false, reason: 'invalid email' };
+  }
+  const inviterName =
+    inviter?.name?.trim() ||
+    inviter?.email?.trim() ||
+    'A Receipt Scanner user';
+  const acceptLink = `https://${INVITE_HOSTING_DOMAIN}${INVITE_LANDING_PATH}?email=${encodeURIComponent(trimmed.toLowerCase())}`;
   try {
-    const trimmed = email.trim();
-    if (!trimmed || !trimmed.includes('@')) {
-      return { ok: false, reason: 'invalid email' };
+    const res = await fetch(EMAILJS_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service_id: cfg.serviceId,
+        template_id: cfg.templateId,
+        user_id: cfg.publicKey,
+        template_params: {
+          to_email: trimmed,
+          inviter_name: inviterName,
+          inviter_email: inviter?.email ?? '',
+          accept_link: acceptLink,
+          subject: `${inviterName} invited you to their household on Receipt Scanner`,
+        },
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      return {
+        ok: false,
+        reason: `EmailJS ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`,
+      };
     }
-    await authMod().sendSignInLinkToEmail(trimmed, buildActionCodeSettings());
     return { ok: true };
   } catch (e) {
-    const msg = (e as Error)?.message ?? 'unknown';
-    // Firebase returns very long error messages with the internal
-    // domain prefix. Strip the prefix so the alert is readable.
-    return { ok: false, reason: msg.replace(/^\[.+?]\s*/, '') };
+    return { ok: false, reason: (e as Error)?.message ?? 'unknown' };
   }
 }
 
@@ -129,6 +145,56 @@ export async function clearPendingInviteEmail(): Promise<void> {
   } catch {
     // ignore
   }
+}
+
+/**
+ * Inspect a URL the app received via Linking and decide whether it's
+ * one of OUR invite links (the new templated-email path, not the
+ * legacy Firebase magic-link). Returns the invitee email from the
+ * `?email=` query param, or null if the URL doesn't match.
+ *
+ * Format we recognize:
+ *   https://balancesheet-android.web.app/invite?email=<encoded>
+ */
+export function parseInviteAppLink(url: string | null): { email: string } | null {
+  if (!url) return null;
+  // Plain string parsing — React Native's URL polyfill ships without
+  // a working URLSearchParams, so `new URL(url).searchParams.get()`
+  // throws or returns null inconsistently across Android versions.
+  // Match either the https app-link OR the custom-scheme deep link.
+  const httpsPrefix = `https://${INVITE_HOSTING_DOMAIN}${INVITE_LANDING_PATH}`;
+  const schemePrefix = `receipt-scanner://${INVITE_LANDING_PATH.replace(/^\//, '')}`;
+  let rest: string;
+  if (url.startsWith(httpsPrefix)) {
+    rest = url.slice(httpsPrefix.length);
+  } else if (url.startsWith(schemePrefix)) {
+    rest = url.slice(schemePrefix.length);
+  } else {
+    return null;
+  }
+  // rest is now whatever follows the path — optional trailing slash,
+  // optional ?query, optional #fragment.
+  const queryIdx = rest.indexOf('?');
+  if (queryIdx < 0) return null;
+  const query = rest.slice(queryIdx + 1).split('#')[0];
+  // Parse query manually. We only care about `email`.
+  for (const pair of query.split('&')) {
+    const eq = pair.indexOf('=');
+    if (eq < 0) continue;
+    const key = pair.slice(0, eq);
+    if (key !== 'email') continue;
+    const rawValue = pair.slice(eq + 1);
+    try {
+      const decoded = decodeURIComponent(rawValue.replace(/\+/g, ' '))
+        .trim()
+        .toLowerCase();
+      if (!decoded.includes('@')) return null;
+      return { email: decoded };
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 /**

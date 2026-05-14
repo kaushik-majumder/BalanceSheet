@@ -726,7 +726,10 @@ function FamilyPanel() {
     // are warnings, not blockers — the invite doc is already in
     // place and the recipient can still join by signing in manually
     // if they ever install the app.
-    const emailRes = await sendInviteEmailLink(trimmed);
+    const emailRes = await sendInviteEmailLink(trimmed, {
+      name: user.displayName ?? null,
+      email: user.email ?? null,
+    });
     setInviting(false);
     setInviteEmail('');
     setShowInviteInput(false);

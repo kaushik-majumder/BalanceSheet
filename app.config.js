@@ -107,6 +107,13 @@ module.exports = ({ config }) => {
       // See scripts/parse-receipt-worker.ts for the deploy guide.
       parseEndpoint: process.env.PARSE_ENDPOINT,
       parseEndpointSecret: process.env.PARSE_ENDPOINT_SECRET,
+      // EmailJS credentials for sending household-invite emails from
+      // a connected Gmail account. All three are public by design —
+      // EmailJS uses domain/rate-limit allow-listing for protection,
+      // not key secrecy. Set via EAS env vars at build/update time.
+      emailjsServiceId: process.env.EMAILJS_SERVICE_ID,
+      emailjsTemplateId: process.env.EMAILJS_TEMPLATE_ID,
+      emailjsPublicKey: process.env.EMAILJS_PUBLIC_KEY,
     },
   });
 };

@@ -600,7 +600,7 @@ export async function inviteUserToHousehold(args: {
   try {
     const db = firestore();
     const now = firestore.FieldValue.serverTimestamp();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     // Look up the household's display name for nicer UI on the
     // invitee side.
     const householdSnap = await db
