@@ -1,8 +1,7 @@
-const withTextRecognitionFix = require('./plugins/withTextRecognitionFix');
 const withGooglePlayAdiToken = require('./plugins/withGooglePlayAdiToken');
 
 module.exports = ({ config }) => {
-  return withGooglePlayAdiToken(withTextRecognitionFix({
+  return withGooglePlayAdiToken({
     ...config,
     name: 'Receipt Scanner',
     slug: 'receipt-scanner',
@@ -124,5 +123,5 @@ module.exports = ({ config }) => {
       emailjsTemplateId: process.env.EMAILJS_TEMPLATE_ID,
       emailjsPublicKey: process.env.EMAILJS_PUBLIC_KEY,
     },
-  }));
+  });
 };
