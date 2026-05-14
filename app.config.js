@@ -84,7 +84,15 @@ module.exports = ({ config }) => {
         'expo-build-properties',
         {
           ios: { useFrameworks: 'static' },
-          android: {},
+          android: {
+            // Google Play minimum target raised to API 35 (Android 15)
+            // for new app uploads in 2026. Expo SDK 51 defaults to 34;
+            // override here. compileSdk must be >= targetSdk so we
+            // bump both. buildTools 35.0.0 matches the SDK version.
+            compileSdkVersion: 35,
+            targetSdkVersion: 35,
+            buildToolsVersion: '35.0.0',
+          },
         },
       ],
     ],

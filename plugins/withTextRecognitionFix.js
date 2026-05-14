@@ -37,15 +37,15 @@ module.exports = function withTextRecognitionFix(config) {
       gradle = gradle
         .replace(
           /compileSdkVersion safeExtGet\('TextRecognition_compileSdkVersion',\s*\d+\)/,
-          "compileSdkVersion safeExtGet('TextRecognition_compileSdkVersion', 34)",
+          "compileSdkVersion safeExtGet('TextRecognition_compileSdkVersion', 35)",
         )
         .replace(
           /buildToolsVersion safeExtGet\('TextRecognition_buildToolsVersion',\s*'[\d.]+'\)/,
-          "buildToolsVersion safeExtGet('TextRecognition_buildToolsVersion', '34.0.0')",
+          "buildToolsVersion safeExtGet('TextRecognition_buildToolsVersion', '35.0.0')",
         )
         .replace(
           /targetSdkVersion safeExtGet\('TextRecognition_targetSdkVersion',\s*\d+\)/,
-          "targetSdkVersion safeExtGet('TextRecognition_targetSdkVersion', 34)",
+          "targetSdkVersion safeExtGet('TextRecognition_targetSdkVersion', 35)",
         )
         .replace(
           /minSdkVersion safeExtGet\('TextRecognition_minSdkVersion',\s*\d+\)/,
@@ -91,7 +91,7 @@ module.exports = function withTextRecognitionFix(config) {
       if (!content.includes('TextRecognition_compileSdkVersion')) {
         content = content.replace(
           /ext\s*\{/,
-          `ext {\n        TextRecognition_compileSdkVersion = 34\n        TextRecognition_buildToolsVersion = '34.0.0'\n        TextRecognition_targetSdkVersion = 34\n        TextRecognition_minSdkVersion = 23`,
+          `ext {\n        TextRecognition_compileSdkVersion = 35\n        TextRecognition_buildToolsVersion = '35.0.0'\n        TextRecognition_targetSdkVersion = 35\n        TextRecognition_minSdkVersion = 23`,
         );
       }
 
