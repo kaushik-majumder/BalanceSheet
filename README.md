@@ -16,9 +16,11 @@ even when the primary AI provider's free tier is exhausted.
   breakdowns, recurring-purchase detection, top-stores list, PDF
   export with a branded layout.
 - **Multi-user, multi-device**: every user has their own private data
-  by default. Invite a family member by email — Firebase sends them a
-  magic-link they can tap to install the app and accept. Once they
-  accept, all receipts sync across both devices in real time.
+  by default. Invite a family member by email — a personalized HTML
+  email goes out via EmailJS (sent from a connected Gmail account)
+  with a one-tap link. Tap → app opens to a signup screen pre-filled
+  with the invited email → set a password → sign in → all receipts
+  sync across both devices in real time.
 - **Offline-first**: receipts live in a local SQLite database first;
   cloud sync is a shadow-write on top, so the app feels instant and
   works without a network.
@@ -40,6 +42,14 @@ You'll also need:
 - `GoogleService-Info.plist` for iOS Firebase (same).
 - `GEMINI_API_KEY` env var, OR a deployed Cloudflare Workers AI
   parser (see [`scripts/PARSE_WORKER_README.md`](scripts/PARSE_WORKER_README.md)).
+- For household invite emails: `EMAILJS_SERVICE_ID`,
+  `EMAILJS_TEMPLATE_ID`, `EMAILJS_PUBLIC_KEY` — sign up at
+  [emailjs.com](https://www.emailjs.com), connect a Gmail service,
+  create an HTML template with `{{inviter_name}}` + `{{accept_link}}`
+  variables, then set the three values via
+  `eas env:create --name EMAILJS_* --environment {preview|production}`.
+  Without them the in-app invite UI still records the Firestore
+  invite doc but no email goes out.
 
 ## Architecture in 30 seconds
 
@@ -120,16 +130,21 @@ Built in three phases, all live:
   `households/{hid}/receipts/{rid}`. Local SQLite stays primary;
   the cloud copy is durable backup + the substrate for sharing.
 - **Phase 3 — household sharing**: invite a family member by email →
-  Firebase sends them a magic-link → they install the app +
-  sign in → they accept the invite → they join your `memberUids`
-  → an `onSnapshot` listener on the receipts collection means every
-  scan on either device shows up on both within a couple of seconds.
+  the app writes an `invites/{email}` doc in Firestore AND fires
+  EmailJS to send a personalized HTML invite from a Gmail account
+  → invitee taps the link → Android app-link verification routes
+  them straight into a dedicated `/invite` screen pre-filled with
+  their email → they set a password + display name → the
+  `acceptInvite` transaction adds them to `memberUids` and deletes
+  the invite atomically → they sign in → an `onSnapshot` listener
+  on the receipts collection means every scan on either device
+  shows up on both within a couple of seconds.
 
 Setup details in
 [`scripts/PHASE2_FIRESTORE_RULES.md`](scripts/PHASE2_FIRESTORE_RULES.md)
 (Firestore rules, free tier) and
 [`scripts/PHASE3_EMAIL_INVITE_SETUP.md`](scripts/PHASE3_EMAIL_INVITE_SETUP.md)
-(magic-link email flow, also free).
+(EmailJS-based email flow, also free — no Blaze plan required).
 
 ## Build & ship
 
@@ -175,16 +190,20 @@ errors, secure storage, and the items-sum sanity check.
 ## Repo layout
 
 ```
-app/              expo-router screens
+app/              expo-router screens — includes app/invite.tsx +
+                  app/invite-finish.tsx for the in-app accept flow
 components/       shared UI primitives (Card, TagChip, AnimatedBar, …)
 lib/              business logic — parser, AI clients, database, auth,
                   cloudSync (Firestore shadow-write + listener), inviteLink
 constants/        theme, category list + icons
 types/            shared TS types (Receipt, LineItem, etc.)
 scripts/          deploy guides, the Cloudflare worker source, docs
-firebase-hosting/ static files (assetlinks.json) for invite-link verification
+firebase-hosting/ static files: /.well-known/assetlinks.json for
+                  Android app-link verification + /invite/ fallback page
+                  for browser-only opens
 plugins/          Expo prebuild config plugins
 __tests__/        Jest tests
+docs/             Play Store launch docs, privacy policy source
 .github/workflows/android-build.yml   CI: APK builds on push to main
 ```
 
