@@ -95,12 +95,21 @@ jobs:
         id: profile
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ github.event.inputs.profile }}" >> "$GITHUB_OUTPUT"
+            NAME="${{ github.event.inputs.profile }}"
           else
-            echo "name=preview" >> "$GITHUB_OUTPUT"
+            NAME="preview"
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          # Production profile emits .aab (Play Store bundle); the
+          # other profiles emit .apk for sideload testing. The output
+          # extension drives the artifact filename below.
+          if [ "$NAME" = "production" ]; then
+            echo "ext=aab" >> "$GITHUB_OUTPUT"
+          else
+            echo "ext=apk" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: EAS local build (Android APK)
+      - name: EAS local build
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           # Use the working directory as-is instead of packaging only
@@ -115,13 +124,13 @@ jobs:
             --platform android \
             --local \
             --non-interactive \
-            --output ./build-output.apk
+            --output ./build-output.${{ steps.profile.outputs.ext }}
 
-      - name: Upload APK artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: receipt-scanner-${{ steps.profile.outputs.name }}-${{ github.sha }}
-          path: build-output.apk
+          path: build-output.${{ steps.profile.outputs.ext }}
           if-no-files-found: error
           retention-days: 14
 
@@ -132,12 +141,14 @@ jobs:
             echo "## Android build"
             echo ""
             echo "- Profile: \`${{ steps.profile.outputs.name }}\`"
+            echo "- Output: \`build-output.${{ steps.profile.outputs.ext }}\`"
             echo "- Commit: \`${{ github.sha }}\`"
             echo "- Status: \`${{ job.status }}\`"
-            if [ -f build-output.apk ]; then
-              SIZE=$(du -h build-output.apk | cut -f1)
-              echo "- APK size: $SIZE"
+            ARTIFACT="build-output.${{ steps.profile.outputs.ext }}"
+            if [ -f "$ARTIFACT" ]; then
+              SIZE=$(du -h "$ARTIFACT" | cut -f1)
+              echo "- Artifact size: $SIZE"
               echo ""
-              echo "Download the APK from the **Artifacts** section above."
+              echo "Download from the **Artifacts** section above."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
