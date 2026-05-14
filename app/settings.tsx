@@ -33,6 +33,10 @@ import {
   subscribeCloudSyncDiagnostics,
   type HouseholdMember,
 } from '../lib/cloudSync';
+import {
+  rememberPendingInviteEmail,
+  sendInviteEmailLink,
+} from '../lib/inviteLink';
 import { setCurrentHouseholdId, getCurrentHouseholdId } from '../lib/database';
 
 function useSettingsStyles() {
@@ -703,24 +707,44 @@ function FamilyPanel() {
       return;
     }
     setInviting(true);
-    const res = await inviteUserToHousehold({
+    // Write the Firestore invite doc first — it's the source of
+    // truth for the accept flow even if the email send hits a snag
+    // (e.g. quota, recipient typo). The email is just a notification.
+    const docRes = await inviteUserToHousehold({
       email: trimmed,
       householdId: hid,
       invitedByUid: user.uid,
       invitedByEmail: user.email ?? null,
       invitedByName: user.displayName ?? null,
     });
-    setInviting(false);
-    if (!res.ok) {
-      Alert.alert('Invite failed', res.reason);
+    if (!docRes.ok) {
+      setInviting(false);
+      Alert.alert('Invite failed', docRes.reason);
       return;
     }
+    // Now ask Firebase to send the magic-link email. Failures here
+    // are warnings, not blockers — the invite doc is already in
+    // place and the recipient can still join by signing in manually
+    // if they ever install the app.
+    const emailRes = await sendInviteEmailLink(trimmed);
+    setInviting(false);
     setInviteEmail('');
     setShowInviteInput(false);
-    Alert.alert(
-      'Invite sent',
-      `${trimmed} will see the invite the next time they sign in to BalanceSheet. They need to install the app and sign in with that exact email.`,
-    );
+    if (emailRes.ok) {
+      // Stash the email locally so IF the inviter happens to be on
+      // the device that receives the tap-through link, we can skip
+      // the "enter your email" prompt.
+      await rememberPendingInviteEmail(trimmed);
+      Alert.alert(
+        'Invite sent',
+        `${trimmed} will receive an email with a one-tap link to install the app and accept the invite. The link expires in 24 hours.`,
+      );
+    } else {
+      Alert.alert(
+        'Email send failed',
+        `The invite was recorded but the email couldn't be sent (${emailRes.reason}). Ask ${trimmed} to install BalanceSheet and sign in with that email — they'll still see the invite on first launch.`,
+      );
+    }
     refresh();
   };
 
