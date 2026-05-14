@@ -10,54 +10,81 @@
   h2 { color: #0F172A; margin-top: 32px; }
   code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
   .effective { color: #6b7280; font-size: 0.9em; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  th { background: #f9fafb; }
 </style>
 </head>
 <body>
 
 <h1>Receipt Scanner — Privacy Policy</h1>
-<p class="effective">Effective: 2026-05-09</p>
+<p class="effective">Effective: 2026-05-14</p>
 
-<p>Receipt Scanner ("the app") is a personal expense-tracking utility that runs entirely on your device. This policy describes what the app does and does not do with your data.</p>
+<p>Receipt Scanner ("the app") is a personal expense-tracking app that scans paper receipts, organizes them by category, and optionally syncs them across the devices of members of a shared household. This policy describes what data the app collects, where it is stored, who it is shared with, and how you can delete it.</p>
 
-<h2>What data the app accesses</h2>
-<ul>
-  <li><strong>Camera:</strong> only when you tap "Scan a Receipt" → "Camera". Used to capture an image of a paper receipt.</li>
-  <li><strong>Photo library:</strong> only when you tap "Scan a Receipt" → "Gallery". Used to import an existing receipt image.</li>
-  <li><strong>Receipt data you enter or capture:</strong> store name, amount, date, category, optional notes, and the receipt image you choose to keep.</li>
-</ul>
-
-<h2>Where the data is stored</h2>
-<p>All data — including the OCR-extracted text, the parsed fields, and any receipt images you save — is stored <strong>only on your device</strong>, in a local SQLite database (<code>receipts.db</code>) inside the app's private storage area.</p>
-
-<h2>What the app does <em>not</em> do</h2>
-<ul>
-  <li>The app does <strong>not</strong> upload your receipts, images, or any other personal data to any server.</li>
-  <li>The app does <strong>not</strong> use third-party analytics, advertising, or tracking SDKs.</li>
-  <li>The app does <strong>not</strong> share your data with anyone.</li>
-  <li>The app does <strong>not</strong> require an account, login, or internet connection to function.</li>
-</ul>
-
-<h2>How OCR (text recognition) works</h2>
-<p>Text extraction uses <strong>Google ML Kit</strong> (on Android) and <strong>Apple Vision</strong> (on iOS). Both run entirely <em>on-device</em>; receipt images are never transmitted to Google, Apple, or any other party.</p>
-
-<h2>Permissions</h2>
+<h2>What data we collect</h2>
 <table>
-  <tr><th align="left">Permission</th><th align="left">Why</th></tr>
+  <tr><th>Data</th><th>When collected</th><th>Why</th></tr>
+  <tr><td>Email address</td><td>When you create an account or are invited to a household</td><td>To sign you in, to address invite emails, to recover your account via password reset</td></tr>
+  <tr><td>Display name</td><td>When you set it during signup or in Profile</td><td>To show "invited by &lt;name&gt;" to household members and personalize invite emails</td></tr>
+  <tr><td>Profile details (first/last name, age, gender, optional profile photo)</td><td>When you fill out the Profile screen</td><td>Stored locally for personalization; not shared off-device unless you upload a profile photo (then stored in Firebase Storage)</td></tr>
+  <tr><td>Receipt photos</td><td>When you scan or import a receipt</td><td>Uploaded to your household's private Firebase Storage namespace so other household members can view the original receipt image</td></tr>
+  <tr><td>Receipt content (store name, date, line items, totals, category)</td><td>Extracted from the photo via on-device OCR, then parsed</td><td>Stored locally in SQLite AND mirrored to your household's private Firestore database for cross-device sync</td></tr>
+  <tr><td>Household membership (which Firebase Auth UIDs belong to your household)</td><td>When you create or join a household</td><td>To enforce that only members can read each other's receipts</td></tr>
+  <tr><td>Anthropic API key (if you provide one)</td><td>If you enter it in Settings</td><td>Stored encrypted on-device only; used directly from your device to call api.anthropic.com</td></tr>
+</table>
+
+<h2>Where your data is stored</h2>
+<ul>
+  <li><strong>On your device</strong> — a local SQLite database (<code>receipts.db</code>) and a small encrypted SecureStore keychain holding API keys and auth tokens. This is the primary source of truth for what you see in the app.</li>
+  <li><strong>Firebase Authentication (Google Cloud)</strong> — your email, hashed password (if you signed up with email/password), display name, and Firebase Auth UID. Managed by Google as our auth provider.</li>
+  <li><strong>Firebase Firestore (Google Cloud)</strong> — your user profile document, your household document, the household's receipt documents, and pending invites. Access is gated by Firestore security rules so only members of your household can read your household's data.</li>
+  <li><strong>Firebase Storage (Google Cloud)</strong> — receipt photos and profile photos. Access gated by the same household membership rule.</li>
+</ul>
+
+<h2>Who we share data with</h2>
+<p>The app sends data to the following third parties only as described below. None of them receive your full receipt history, your auth password, or unrelated personal data.</p>
+<table>
+  <tr><th>Recipient</th><th>What we send</th><th>Why</th></tr>
+  <tr><td>Google Firebase (Auth, Firestore, Storage)</td><td>Authentication credentials, profile data, receipt data, photos</td><td>Cloud storage + sync infrastructure for the app</td></tr>
+  <tr><td>Google Gemini API (Google AI)</td><td>The OCR-extracted text of a receipt — NOT the photo itself</td><td>To parse messy receipt text into structured fields (store, items, totals). Subject to <a href="https://policies.google.com/privacy">Google's privacy policy</a></td></tr>
+  <tr><td>Cloudflare Workers AI</td><td>Same OCR text as Gemini, but only if Gemini's free tier is exhausted</td><td>Fallback receipt parser. Subject to <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare's privacy policy</a></td></tr>
+  <tr><td>EmailJS</td><td>The invited person's email address, the inviter's name, and the accept link — only when you send a household invite</td><td>To deliver the personalized invite email from a connected Gmail account. Subject to <a href="https://www.emailjs.com/legal/privacy-policy/">EmailJS's privacy policy</a></td></tr>
+  <tr><td>Anthropic (api.anthropic.com)</td><td>Only the API requests you initiate, only if you have provided an Anthropic API key in Settings</td><td>Optional feature, sent directly from your device using your own key. Subject to <a href="https://www.anthropic.com/legal/privacy">Anthropic's privacy policy</a></td></tr>
+</table>
+
+<p>We do <strong>not</strong> use third-party analytics, advertising networks, or behavioral-tracking SDKs. The app contains no ads.</p>
+
+<h2>How OCR works</h2>
+<p>Receipt photos are processed by <strong>Google ML Kit Text Recognition</strong> (Android) or <strong>Apple Vision</strong> (iOS), both of which run entirely <em>on your device</em>. Your photo never leaves the device for OCR purposes. The extracted plain text is then sent to Google Gemini (or Cloudflare Workers AI as a fallback) for parsing into structured fields. The photo itself is only uploaded if you choose to keep it attached to the receipt.</p>
+
+<h2>Encryption</h2>
+<p>All data in transit between the app and our third-party providers (Firebase, Gemini, EmailJS, Cloudflare) is encrypted via HTTPS. Firebase Firestore and Storage encrypt data at rest by default. The Anthropic API key you optionally provide is stored on-device using the OS's secure keychain (Keychain on iOS, EncryptedSharedPreferences on Android).</p>
+
+<h2>Permissions and what they're used for</h2>
+<table>
+  <tr><th>Permission</th><th>Why</th></tr>
   <tr><td><code>CAMERA</code></td><td>Photograph paper receipts (only when you initiate)</td></tr>
   <tr><td><code>READ_MEDIA_IMAGES</code> / <code>READ_EXTERNAL_STORAGE</code></td><td>Import receipt images from your gallery (only when you initiate)</td></tr>
+  <tr><td><code>USE_BIOMETRIC</code> / <code>USE_FINGERPRINT</code></td><td>Optional app-lock unlock if you enable it in Settings</td></tr>
+  <tr><td>Internet access</td><td>Sign-in, cloud sync, AI receipt parsing, invite emails</td></tr>
 </table>
 
 <h2>Deleting your data</h2>
-<p>You can delete any individual receipt from inside the app (Edit → Delete). To remove all data, uninstall the app — Android removes the app's private storage on uninstall.</p>
+<ul>
+  <li><strong>Individual receipts:</strong> Open the receipt → Edit → Delete.</li>
+  <li><strong>Your entire account and all cloud data:</strong> Settings → Account → Delete account. This deletes your Firebase Auth user, removes you from your household's <code>memberUids</code> (or deletes the household entirely if you were the only member), deletes your user profile document, deletes any pending invites addressed to you, and wipes the local SQLite database and SecureStore keychain on the device. If you were a member of a shared household, the other members keep the receipts they saved while you were sharing — your scans remain with the family.</li>
+  <li><strong>Uninstalling the app:</strong> Removes only the on-device data. Your cloud data (Firestore docs, Firebase Storage photos, Firebase Auth user) remains until you also run "Delete account" from inside the app on another device, or you contact us to request manual deletion.</li>
+</ul>
 
 <h2>Children's privacy</h2>
-<p>The app does not knowingly collect data from anyone, including children, because it does not transmit data off-device.</p>
+<p>The app is not intended for users under 13. We do not knowingly collect personal information from children under 13. If you believe a child has provided personal information through the app, contact us and we will delete it.</p>
 
 <h2>Changes to this policy</h2>
 <p>If material changes are made to how the app handles data, an updated version of this policy will be published at the same URL with a new effective date.</p>
 
 <h2>Contact</h2>
-<p>Questions about this policy: <a href="https://github.com/kaushik-majumder/BalanceSheet/issues">open an issue on GitHub</a>.</p>
+<p>For privacy questions or to request manual data deletion: <a href="https://github.com/kaushik-majumder/BalanceSheet/issues">open an issue on GitHub</a>.</p>
 
 </body>
 </html>
