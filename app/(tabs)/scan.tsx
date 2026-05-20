@@ -408,6 +408,23 @@ export default function ScanScreen() {
       fontSize: t.font.sm,
       fontWeight: '600',
     },
+    addItemBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      marginTop: 10,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      borderRadius: t.radius.full,
+      borderStyle: 'dashed',
+    },
+    addItemBtnText: {
+      color: t.colors.primary,
+      fontSize: t.font.sm,
+      fontWeight: '700',
+    },
     buttonRow: {
       flexDirection: 'row',
       gap: t.spacing.sm,
@@ -939,13 +956,32 @@ export default function ScanScreen() {
   };
 
   const saveEditedItem = (updated: LineItem) => {
-    setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+    setItems((prev) => {
+      // Edit-existing if the id is already in the list; otherwise this
+      // is a brand-new item (from `addNewItem` below) being saved for
+      // the first time — append it.
+      const exists = prev.some((it) => it.id === updated.id);
+      return exists
+        ? prev.map((it) => (it.id === updated.id ? updated : it))
+        : [...prev, updated];
+    });
     setEditingItem(null);
   };
 
   const deleteItem = (id: string) => {
     setItems((prev) => prev.filter((it) => it.id !== id));
     setEditingItem(null);
+  };
+
+  /**
+   * Open ItemEditModal with a fresh, empty line item. The user fills
+   * it in and saves; saveEditedItem detects the new id and appends.
+   * If the user cancels (modal closes with no save), nothing is added.
+   * Used for manual-entry receipts (which start with an empty items
+   * array) and for adding items to AI-parsed receipts that missed one.
+   */
+  const addNewItem = () => {
+    setEditingItem({ id: uuidv4(), name: '', amount: 0 });
   };
 
   // ─── Idle state ────────────────────────────────────────────────────────────
@@ -1157,16 +1193,27 @@ export default function ScanScreen() {
         />
       </Card>
 
-      {/* Line items — tap a row to edit / delete. */}
-      {items.length > 0 && (
-        <Card style={styles.fieldCard}>
-          <View style={styles.itemsHeader}>
-            <Text style={styles.fieldLabel}>
-              Detected Line Items ({items.length})
-            </Text>
+      {/* Line items — always rendered so manual-entry receipts have a
+          way to add them. Tap a row to edit / delete; tap 'Add item'
+          to append a new one. */}
+      <Card style={styles.fieldCard}>
+        <View style={styles.itemsHeader}>
+          <Text style={styles.fieldLabel}>
+            {items.length > 0
+              ? `Line Items (${items.length})`
+              : 'Line Items'}
+          </Text>
+          {items.length > 0 ? (
             <Text style={styles.itemsHint}>Tap to edit</Text>
-          </View>
-          {(showAllItems ? items : items.slice(0, 12)).map((item) => (
+          ) : null}
+        </View>
+        {items.length === 0 ? (
+          <Text style={styles.itemsHint}>
+            No items yet. Tap "Add item" to log each purchase, or leave
+            empty if you only want the total.
+          </Text>
+        ) : (
+          (showAllItems ? items : items.slice(0, 12)).map((item) => (
             <Pressable
               key={item.id}
               onPress={() => setEditingItem(item)}
@@ -1183,26 +1230,38 @@ export default function ScanScreen() {
                 ${item.amount.toFixed(2)}
               </Text>
             </Pressable>
-          ))}
-          {items.length > 12 && (
-            <TouchableOpacity
-              onPress={() => setShowAllItems((v) => !v)}
-              style={styles.moreItemsBtn}
-            >
-              <Text style={styles.moreItemsText}>
-                {showAllItems
-                  ? 'Show fewer'
-                  : `Show ${items.length - 12} more items`}
-              </Text>
-              <Ionicons
-                name={showAllItems ? 'chevron-up' : 'chevron-down'}
-                size={16}
-                color={theme.colors.primary}
-              />
-            </TouchableOpacity>
-          )}
-        </Card>
-      )}
+          ))
+        )}
+        {items.length > 12 && (
+          <TouchableOpacity
+            onPress={() => setShowAllItems((v) => !v)}
+            style={styles.moreItemsBtn}
+          >
+            <Text style={styles.moreItemsText}>
+              {showAllItems
+                ? 'Show fewer'
+                : `Show ${items.length - 12} more items`}
+            </Text>
+            <Ionicons
+              name={showAllItems ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={theme.colors.primary}
+            />
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          onPress={addNewItem}
+          style={styles.addItemBtn}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="add-circle-outline"
+            size={20}
+            color={theme.colors.primary}
+          />
+          <Text style={styles.addItemBtnText}>Add item</Text>
+        </TouchableOpacity>
+      </Card>
 
       <ItemEditModal
         item={editingItem}
